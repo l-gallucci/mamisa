@@ -1,0 +1,5 @@
+include README.md
+include LICENSE
+include INSTALL.md
+include CHANGELOG.md
+recursive-include mamisa *.py
