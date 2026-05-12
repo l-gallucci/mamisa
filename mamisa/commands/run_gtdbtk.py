@@ -189,7 +189,6 @@ Examples:
 
 def run(args):
     """Execute the run-gtdbtk command"""
-    import argparse
     
     print_header("MaMISA - Run GTDB-Tk")
     
