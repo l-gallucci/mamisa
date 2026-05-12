@@ -39,7 +39,9 @@ mamisa --help
 
 ```bash
 # anvi'o
-conda create -n anvio-8 -c conda-forge -c bioconda anvio=8
+conda create -n anvio-9 -c conda-forge -c bioconda anvio=9
+
+###or use dev version
 
 # CheckM2
 conda create -n checkm2 -c conda-forge -c bioconda checkm2
