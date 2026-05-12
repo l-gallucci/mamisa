@@ -47,7 +47,7 @@ conda create -n anvio-9 -c conda-forge -c bioconda anvio=9
 conda create -n checkm2 -c conda-forge -c bioconda checkm2
 
 # GTDB-Tk
-conda create -n gtdbtk-2 -c conda-forge -c bioconda gtdbtk=2.3.2
+conda create -n gtdbtk-2 -c conda-forge -c bioconda gtdbtk
 export GTDBTK_DATA_PATH=/path/to/gtdbtk_data
 ```
 
