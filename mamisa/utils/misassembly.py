@@ -4,9 +4,13 @@ Misassembly data parsing utilities (anvi'o clipping files)
 
 from pathlib import Path
 from collections import defaultdict
-from typing import Dict, List, Set
+from typing import Dict, List, Set, Tuple
 
 from .logging import log_info, log_warning
+
+
+# A clipping record: (position, clipping_coverage)
+ClipRecord = Tuple[int, int]
 
 
 def find_clipping_files(misassembly_dir: Path) -> List[Path]:
@@ -17,14 +21,19 @@ def find_clipping_files(misassembly_dir: Path) -> List[Path]:
     return files
 
 
-def parse_clipping_files(clipping_files: List[Path]) -> Dict[str, List[int]]:
+def parse_clipping_files(clipping_files: List[Path]) -> Dict[str, List[ClipRecord]]:
     """
-    Parse *-clipping.txt files from anvi'o.
+    Parse *-clipping.txt files produced by anvi-script-find-misassemblies.
+
+    Expected column layout (tab-separated, one header line):
+        contig_name  sample_name  position  clipping_coverage  [...]
 
     Returns:
-        dict mapping contig_name -> sorted list of clipping positions
+        dict mapping contig_name -> sorted list of (position, coverage) tuples.
+        If coverage is absent or non-numeric, it defaults to 1 so downstream
+        filters can still work without crashing.
     """
-    clipping_positions: Dict[str, List[int]] = defaultdict(list)
+    clipping_data: Dict[str, List[ClipRecord]] = defaultdict(list)
 
     for file_path in clipping_files:
         log_info(f"  Reading: {file_path.name}")
@@ -40,7 +49,9 @@ def parse_clipping_files(clipping_files: List[Path]) -> Dict[str, List[int]]:
                         f"(expected ≥3 fields, got {len(fields)})"
                     )
                     continue
+
                 contig_name = fields[0]
+
                 try:
                     position = int(fields[2])
                 except ValueError:
@@ -49,30 +60,89 @@ def parse_clipping_files(clipping_files: List[Path]) -> Dict[str, List[int]]:
                         f"position '{fields[2]}' is not an integer"
                     )
                     continue
-                clipping_positions[contig_name].append(position)
 
-    for contig in clipping_positions:
-        clipping_positions[contig].sort()
+                # Field 4 (index 3) is the clipping read count
+                coverage = 1
+                if len(fields) >= 4:
+                    try:
+                        coverage = int(fields[3])
+                    except ValueError:
+                        pass  # non-numeric coverage → keep default 1
 
-    return dict(clipping_positions)
+                clipping_data[contig_name].append((position, coverage))
+
+    # Sort each contig's records by position
+    for contig in clipping_data:
+        clipping_data[contig].sort(key=lambda r: r[0])
+
+    return dict(clipping_data)
 
 
-def load_clipping_positions(misassembly_dir: Path) -> Dict[str, List[int]]:
+def filter_by_coverage(
+    clipping_data: Dict[str, List[ClipRecord]],
+    min_coverage: int,
+) -> Dict[str, List[ClipRecord]]:
     """
-    Load all clipping positions from a directory.
-    Returns dict mapping contig_name -> sorted list of clipping positions.
+    Return a filtered copy keeping only clipping records where coverage >= min_coverage.
+    Contigs with no records surviving the filter are dropped entirely.
+    """
+    if min_coverage <= 1:
+        return clipping_data
+
+    filtered: Dict[str, List[ClipRecord]] = {}
+    for contig, records in clipping_data.items():
+        passing = [r for r in records if r[1] >= min_coverage]
+        if passing:
+            filtered[contig] = passing
+
+    n_removed = sum(len(v) for v in clipping_data.values()) - \
+                sum(len(v) for v in filtered.values())
+    log_info(
+        f"Coverage filter (≥{min_coverage}): "
+        f"kept {sum(len(v) for v in filtered.values()):,} positions, "
+        f"dropped {n_removed:,} low-coverage positions"
+    )
+    return filtered
+
+
+def load_clipping_data(
+    misassembly_dir: Path,
+    min_coverage: int = 0,
+) -> Dict[str, List[ClipRecord]]:
+    """
+    Load all clipping data from a directory, optionally filtered by coverage.
+
+    Returns dict mapping contig_name -> sorted list of (position, coverage).
     """
     files = find_clipping_files(misassembly_dir)
     if not files:
         return {}
-    positions = parse_clipping_files(files)
-    log_info(f"Contigs with misassemblies: {len(positions):,}")
-    return positions
+
+    data = parse_clipping_files(files)
+    if min_coverage > 1:
+        data = filter_by_coverage(data, min_coverage)
+
+    n_contigs = len(data)
+    n_positions = sum(len(v) for v in data.values())
+    log_info(f"Clipping data: {n_contigs:,} contigs, {n_positions:,} positions")
+    return data
 
 
-def get_contigs_with_misassemblies(misassembly_dir: Path) -> Set[str]:
+def load_clipping_positions(
+    misassembly_dir: Path,
+    min_coverage: int = 0,
+) -> Dict[str, List[int]]:
     """
-    Return only the set of contig names that have misassemblies.
-    Convenience wrapper around load_clipping_positions when positions are not needed.
+    Load clipping positions (position-only, no coverage) from a directory.
+    Backward-compatible wrapper around load_clipping_data.
     """
-    return set(load_clipping_positions(misassembly_dir).keys())
+    data = load_clipping_data(misassembly_dir, min_coverage)
+    return {contig: [pos for pos, _ in records] for contig, records in data.items()}
+
+
+def get_contigs_with_misassemblies(
+    misassembly_dir: Path,
+    min_coverage: int = 0,
+) -> Set[str]:
+    """Return the set of contig names that have at least one clipping position."""
+    return set(load_clipping_positions(misassembly_dir, min_coverage).keys())
