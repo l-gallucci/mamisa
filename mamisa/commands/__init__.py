@@ -9,6 +9,7 @@ from . import run_gtdbtk
 from . import process_large_contigs
 from . import check_chimeras
 from . import check_read_chimeras
+from . import classify_clipping
 
 __all__ = [
     'filter_misassemblies',
@@ -18,4 +19,5 @@ __all__ = [
     'process_large_contigs',
     'check_chimeras',
     'check_read_chimeras',
+    'classify_clipping',
 ]

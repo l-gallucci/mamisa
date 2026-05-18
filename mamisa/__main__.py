@@ -15,6 +15,7 @@ from mamisa.commands import run_gtdbtk
 from mamisa.commands import process_large_contigs
 from mamisa.commands import check_chimeras
 from mamisa.commands import check_read_chimeras
+from mamisa.commands import classify_clipping
 from mamisa import __version__
 
 
@@ -32,6 +33,7 @@ Available commands:
   process-large-contigs   Extract, QC, and filter large contigs intelligently
   check-chimeras          Detect chimeric MAGs and circular contigs (GC-based)
   check-read-chimeras     Detect chimeric contigs via read-level taxonomy (Kraken2+BAM)
+  classify-clipping       Classify each clipping position with BAM evidence
 
 Examples:
   mamisa filter-misassemblies --help
@@ -54,6 +56,7 @@ For more information, visit: https://github.com/yourusername/mamisa
     process_large_contigs.register_parser(subparsers)
     check_chimeras.register_parser(subparsers)
     check_read_chimeras.register_parser(subparsers)
+    classify_clipping.register_parser(subparsers)
     
     # Parse arguments
     args = parser.parse_args()
