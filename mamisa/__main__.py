@@ -16,6 +16,7 @@ from mamisa.commands import process_large_contigs
 from mamisa.commands import check_chimeras
 from mamisa.commands import check_read_chimeras
 from mamisa.commands import classify_clipping
+from mamisa.commands import check_zero_coverage
 from mamisa import __version__
 
 
@@ -34,6 +35,7 @@ Available commands:
   check-chimeras          Detect chimeric MAGs and circular contigs (GC-based)
   check-read-chimeras     Detect chimeric contigs via read-level taxonomy (Kraken2+BAM)
   classify-clipping       Classify each clipping position with BAM evidence
+  check-zero-coverage     Validate assembly regions with no read coverage via BLAST
 
 Examples:
   mamisa filter-misassemblies --help
@@ -57,6 +59,7 @@ For more information, visit: https://github.com/yourusername/mamisa
     check_chimeras.register_parser(subparsers)
     check_read_chimeras.register_parser(subparsers)
     classify_clipping.register_parser(subparsers)
+    check_zero_coverage.register_parser(subparsers)
     
     # Parse arguments
     args = parser.parse_args()

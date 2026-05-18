@@ -12,25 +12,32 @@ Classify each anvi'o soft-clipping position as one of:
 
 Evidence signals used
 ---------------------
-  depth_ratio          local_depth / contig_mean_depth
-                        spike → repeat; drop → deletion
-  discordant_fraction  primary reads not in a proper pair
-                        elevated → inter-chromosomal or large-scale rearrangement
-  large_insert_fraction primary proper-pair reads whose |TLEN| > mean + 3 σ
-                        elevated → large insertion / structural variant
-  strand_fwd_fraction  fraction of primary reads on the forward strand
-                        extreme bias → strand-specific clipping artefact
-  clipped_base_entropy Shannon entropy (bits) of the soft-clipped sequences
-                        low → repetitive bases (tandem repeat boundary)
-                        high → diverse sequence (genuine break or chimera)
-  taxonomy_shift       True when a check-read-chimeras window overlapping this
-                        position is flagged as a taxonomic shift
+  depth_ratio           local_depth / contig_mean_depth
+                         spike → repeat; drop → deletion
+  discordant_fraction   primary reads not in a proper pair
+  large_insert_fraction primary proper-pair reads with |TLEN| > mean + 3 σ
+  strand_fwd_fraction   fraction of primary reads on the forward strand
+  clipped_base_entropy  Shannon entropy of soft-clipped sequences
+                         low → repetitive; high → diverse sequence
+  taxonomy_shift        True when a check-read-chimeras window overlaps this position
+  repeat_blast_cov_pct  (optional) % of contig covered by self-BLAST repeat intervals
+  in_repeat_region      (optional) True when clip_pos falls inside a self-BLAST repeat
 
 BAM categories
 --------------
   Depth            primary + secondary (-F 2048, supplementary excluded)
   Pair statistics  primary only (FLAG & 0x100 == 0)
   Supplementary    excluded throughout
+
+Self-BLAST (optional, --assembly + --self-blast)
+-------------------------------------------------
+  Each contig with clipping positions is BLASTed against itself.
+  Alignments ≥ 200 bp and ≥ 80 % identity (thresholds from the anvi'o long-read
+  benchmarking workflow) identify internally duplicated regions.
+  A clipping position that falls inside such a region receives +3 to the
+  repeat_collapse score, regardless of the depth_ratio signal.
+
+Reference: https://merenlab.org/data/benchmarking-long-read-assemblers/
 """
 
 import csv
@@ -39,7 +46,7 @@ import argparse
 import subprocess
 import sys
 from pathlib import Path
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from ..utils.misassembly import load_clipping_data
 from ..utils.bam_stats import (
@@ -93,11 +100,8 @@ def load_taxonomy_shifts(
     flank: int = 5000,
 ) -> Dict[str, List[Tuple[int, int]]]:
     """
-    Parse the chimera_read_windows.tsv from check-read-chimeras and return
-    a dict mapping contig → list of (start, end) tuples for shifted windows.
-
-    `flank` bp is added on each side so that a clipping position just outside
-    a window boundary is still flagged.
+    Parse chimera_read_windows.tsv from check-read-chimeras.
+    Returns contig → list of (start, end) for shifted windows (+ flank).
     """
     shifts: Dict[str, List[Tuple[int, int]]] = {}
 
@@ -115,9 +119,8 @@ def load_taxonomy_shifts(
             if contig:
                 shifts.setdefault(contig, []).append((start, end))
 
-    n_contigs = len(shifts)
     n_windows = sum(len(v) for v in shifts.values())
-    log_info(f"Taxonomy shifts loaded: {n_windows:,} windows across {n_contigs:,} contigs")
+    log_info(f"Taxonomy shifts: {n_windows:,} windows across {len(shifts):,} contigs")
     return shifts
 
 
@@ -126,8 +129,25 @@ def has_taxonomy_shift(
     clip_pos: int,
     shifts: Dict[str, List[Tuple[int, int]]],
 ) -> bool:
-    windows = shifts.get(contig, [])
-    return any(start <= clip_pos <= end for start, end in windows)
+    return any(s <= clip_pos <= e for s, e in shifts.get(contig, []))
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Self-BLAST repeat data loading
+# ──────────────────────────────────────────────────────────────────────────────
+
+def load_contigs_for_blast(
+    assembly: Path,
+    target_contigs: set,
+) -> Dict[str, str]:
+    """Read only the contigs that have clipping positions."""
+    from ..utils.fasta import read_fasta_streaming
+    contigs = {}
+    for name, seq in read_fasta_streaming(assembly):
+        if name in target_contigs:
+            contigs[name] = seq
+    log_info(f"Loaded {len(contigs):,} contig sequences for self-BLAST")
+    return contigs
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -146,48 +166,43 @@ def _to_float(v) -> float:
 def classify_position(
     stats: dict,
     taxonomy_shift: bool = False,
+    in_repeat_region: bool = False,
+    repeat_blast_cov_pct: float = 0.0,
 ) -> Tuple[str, str, List[str]]:
     """
-    Classify one clipping position given its BAM-derived stats.
+    Classify one clipping position.
 
     Returns (classification, confidence, evidence_list).
 
-    Classification labels
-    ---------------------
-    end_artefact      near contig terminus (<500 bp); high-confidence noise
-    repeat_collapse   depth spike and/or low-entropy clipped bases
-    deletion_artefact local depth drop; internal deletion or local collapse
-    chimera_candidate discordant pairs + large inserts + optional taxon shift
-    sv_candidate      SV signal (discordant) without depth anomaly or taxon shift
-    low_confidence    ambiguous or insufficient evidence
-
-    Confidence: High / Medium / Low
+    repeat_blast_cov_pct and in_repeat_region come from self-BLAST and, when
+    available, directly boost the repeat_collapse score:
+      in_repeat_region = True  → +3  (position sits inside a known repeat)
+      repeat_blast_cov_pct > 30% → +2  (repeat-rich contig, even if not directly inside)
     """
     evidence: List[str] = []
 
-    near_end = bool(stats.get('near_contig_end', False))
+    near_end    = bool(stats.get('near_contig_end', False))
     depth_ratio = _to_float(stats.get('depth_ratio'))
-    disc_frac = _to_float(stats.get('discordant_fraction'))
-    large_ins = _to_float(stats.get('large_insert_fraction'))
-    strand_fwd = _to_float(stats.get('strand_fwd_fraction'))
-    entropy = _to_float(stats.get('clipped_base_entropy'))
-    n_primary = int(stats.get('primary_reads_in_window', 0))
+    disc_frac   = _to_float(stats.get('discordant_fraction'))
+    large_ins   = _to_float(stats.get('large_insert_fraction'))
+    strand_fwd  = _to_float(stats.get('strand_fwd_fraction'))
+    entropy     = _to_float(stats.get('clipped_base_entropy'))
+    n_primary   = int(stats.get('primary_reads_in_window', 0))
 
-    # ── Rule 1: near contig end → artefact ─────────────────────────────────
+    # ── Rule 1: near contig end ─────────────────────────────────────────────
     if near_end:
         evidence.append('near_contig_end')
         return 'end_artefact', 'High', evidence
 
-    # ── Insufficient depth: can't say anything meaningful ──────────────────
+    # ── Insufficient depth ──────────────────────────────────────────────────
     if n_primary < 5:
         evidence.append('low_read_count')
         return 'low_confidence', 'Low', evidence
 
-    # ── Score each category ─────────────────────────────────────────────────
-    repeat_score = 0
+    repeat_score   = 0
     deletion_score = 0
-    chimera_score = 0
-    sv_score = 0
+    chimera_score  = 0
+    sv_score       = 0
 
     # Depth ratio
     if not math.isnan(depth_ratio):
@@ -229,7 +244,7 @@ def classify_position(
             sv_score += 1
             evidence.append(f'large_insert_{large_ins:.2f}')
 
-    # Clipped-base entropy (low = repetitive = repeat boundary)
+    # Clipped-base entropy (low = repetitive)
     if not math.isnan(entropy):
         if entropy < 0.8:
             repeat_score += 2
@@ -246,36 +261,39 @@ def classify_position(
         elif strand_fwd < 0.1 or strand_fwd > 0.9:
             evidence.append(f'strand_imbalance_{strand_fwd:.2f}')
 
-    # Taxonomy shift (strong signal for chimera)
+    # Taxonomy shift
     if taxonomy_shift:
         chimera_score += 3
         evidence.append('taxonomy_shift')
 
+    # ── Self-BLAST repeat evidence ──────────────────────────────────────────
+    if in_repeat_region:
+        repeat_score += 3
+        evidence.append('self_blast_repeat_region')
+    elif repeat_blast_cov_pct > 30.0:
+        repeat_score += 2
+        evidence.append(f'self_blast_repeat_rich_{repeat_blast_cov_pct:.1f}pct')
+    elif repeat_blast_cov_pct > 10.0:
+        repeat_score += 1
+        evidence.append(f'self_blast_repeat_{repeat_blast_cov_pct:.1f}pct')
+
     # ── Decision ────────────────────────────────────────────────────────────
     scores = {
-        'repeat_collapse': repeat_score,
+        'repeat_collapse':   repeat_score,
         'deletion_artefact': deletion_score,
         'chimera_candidate': chimera_score,
-        'sv_candidate': sv_score,
+        'sv_candidate':      sv_score,
     }
-
     max_score = max(scores.values())
 
     if max_score < 2:
         return 'low_confidence', 'Low', evidence
 
-    # Break ties using biological priority:
-    # chimera > repeat > deletion > sv  (most actionable first)
+    # biological priority for tie-breaking: chimera > repeat > deletion > sv
     priority = ['chimera_candidate', 'repeat_collapse', 'deletion_artefact', 'sv_candidate']
     winner = max(priority, key=lambda c: scores[c])
 
-    if max_score >= 5:
-        confidence = 'High'
-    elif max_score >= 3:
-        confidence = 'Medium'
-    else:
-        confidence = 'Low'
-
+    confidence = 'High' if max_score >= 5 else ('Medium' if max_score >= 3 else 'Low')
     return winner, confidence, evidence
 
 
@@ -287,7 +305,8 @@ _OUTPUT_FIELDS = [
     'contig', 'clip_pos', 'contig_length', 'local_depth',
     'primary_reads_in_window', 'contig_mean_depth', 'depth_ratio',
     'discordant_fraction', 'large_insert_fraction', 'strand_fwd_fraction',
-    'clipped_base_entropy', 'near_contig_end', 'taxonomy_shift',
+    'clipped_base_entropy', 'near_contig_end',
+    'taxonomy_shift', 'repeat_blast_cov_pct', 'in_repeat_region',
     'classification', 'confidence', 'evidence',
 ]
 
@@ -295,9 +314,12 @@ _OUTPUT_FIELDS = [
 def write_report(
     results: Dict[Tuple[str, int], dict],
     taxonomy_shifts: Dict[str, List[Tuple[int, int]]],
+    repeat_stats: Dict,    # {contig_name: RepeatStats} from batch_self_blast; may be {}
     output_path: Path,
 ) -> dict:
-    """Classify all positions and write the report TSV. Returns label counts."""
+    """Classify all positions and write the TSV report. Returns label counts."""
+    from ..utils.repeat_blast import position_in_repeat
+
     label_counts: Dict[str, int] = {}
 
     with open(output_path, 'w', newline='') as f:
@@ -306,15 +328,31 @@ def write_report(
 
         for (contig, clip_pos), stats in sorted(results.items()):
             tax_shift = has_taxonomy_shift(contig, clip_pos, taxonomy_shifts)
-            label, confidence, evidence = classify_position(stats, tax_shift)
+
+            # Self-BLAST repeat signals
+            contig_repeat = repeat_stats.get(contig, {})
+            repeat_cov    = contig_repeat.get('repeat_coverage_pct', 0.0)
+            in_repeat     = (
+                position_in_repeat(clip_pos, contig_repeat.get('intervals', []))
+                if contig_repeat else False
+            )
+
+            label, confidence, evidence = classify_position(
+                stats,
+                taxonomy_shift=tax_shift,
+                in_repeat_region=in_repeat,
+                repeat_blast_cov_pct=repeat_cov,
+            )
             label_counts[label] = label_counts.get(label, 0) + 1
 
             writer.writerow({
                 **stats,
-                'taxonomy_shift': tax_shift,
-                'classification': label,
-                'confidence': confidence,
-                'evidence': '|'.join(evidence) if evidence else 'none',
+                'taxonomy_shift':       tax_shift,
+                'repeat_blast_cov_pct': f'{repeat_cov:.1f}' if contig_repeat else 'N/A',
+                'in_repeat_region':     in_repeat if contig_repeat else 'N/A',
+                'classification':       label,
+                'confidence':           confidence,
+                'evidence':             '|'.join(evidence) if evidence else 'none',
             })
 
     return label_counts
@@ -333,6 +371,10 @@ def run_classify_clipping(
     min_clip_coverage: int,
     taxonomy_windows: Optional[Path],
     taxonomy_flank: int,
+    assembly: Optional[Path],
+    run_self_blast: bool,
+    self_blast_min_len: int,
+    self_blast_min_identity: float,
     dry_run: bool,
 ) -> None:
 
@@ -349,7 +391,8 @@ def run_classify_clipping(
         sys.exit(1)
 
     n_positions = sum(len(v) for v in clipping_data.values())
-    log_info(f"Loaded {n_positions:,} clipping positions across {len(clipping_data):,} contigs")
+    log_info(f"Loaded {n_positions:,} clipping positions across "
+             f"{len(clipping_data):,} contigs")
 
     # ── 2. Contig lengths (BAM header) ────────────────────────────────────
     print_section("Reading contig metadata from BAM")
@@ -365,14 +408,16 @@ def run_classify_clipping(
     print_section("Estimating library insert size")
     insert_mean, insert_std = estimate_insert_size(bam_file, min_mapq=min_mapq)
     if insert_mean == 0:
-        log_warning("Insert-size estimation failed (single-end or unstranded library?) — "
-                    "large_insert_fraction will be N/A")
+        log_warning("Insert-size estimation failed — large_insert_fraction will be N/A")
 
     # ── 5. Per-position BAM stats ─────────────────────────────────────────
     if dry_run:
         log_info("\nDRY-RUN: skipping BAM streaming")
-        log_info(f"Would process {n_positions:,} positions with window={window} bp, "
-                 f"min_mapq={min_mapq}")
+        log_info(f"Would process {n_positions:,} positions "
+                 f"(window={window} bp, min_mapq={min_mapq})")
+        if run_self_blast:
+            log_info(f"Would self-BLAST {len(clipping_data):,} contigs "
+                     f"(min_len={self_blast_min_len}, identity≥{self_blast_min_identity}%)")
         log_info(f"Would write report to: {output}")
         return
 
@@ -398,22 +443,40 @@ def run_classify_clipping(
         print_section("Loading taxonomy shift windows")
         taxonomy_shifts = load_taxonomy_shifts(taxonomy_windows, flank=taxonomy_flank)
 
-    # ── 7. Classify and write ─────────────────────────────────────────────
+    # ── 7. Self-BLAST repeat detection (optional) ─────────────────────────
+    repeat_stats: Dict = {}
+    if run_self_blast:
+        if not assembly:
+            log_error("--self-blast requires --assembly")
+            sys.exit(1)
+        from ..utils.repeat_blast import check_blast as _check_blast, batch_self_blast
+        if not _check_blast():
+            log_warning("Skipping self-BLAST (BLAST+ not found)")
+        else:
+            print_section("Self-BLAST repeat detection")
+            log_info(f"Parameters: min_len={self_blast_min_len} bp, "
+                     f"min_identity={self_blast_min_identity}%")
+            contig_seqs = load_contigs_for_blast(assembly, set(clipping_data.keys()))
+            repeat_stats = batch_self_blast(
+                contig_seqs,
+                min_len=self_blast_min_len,
+                min_identity=self_blast_min_identity,
+            )
+
+    # ── 8. Classify and write ─────────────────────────────────────────────
     print_section("Classifying positions")
     output.parent.mkdir(parents=True, exist_ok=True)
-    label_counts = write_report(position_stats, taxonomy_shifts, output)
+    label_counts = write_report(
+        position_stats, taxonomy_shifts, repeat_stats, output
+    )
 
-    # ── 8. Summary ─────────────────────────────────────────────────────────
+    # ── 9. Summary ─────────────────────────────────────────────────────────
     print_section("CLASSIFICATION SUMMARY")
     total = sum(label_counts.values())
 
     label_order = [
-        'end_artefact',
-        'repeat_collapse',
-        'deletion_artefact',
-        'chimera_candidate',
-        'sv_candidate',
-        'low_confidence',
+        'end_artefact', 'repeat_collapse', 'deletion_artefact',
+        'chimera_candidate', 'sv_candidate', 'low_confidence',
     ]
     label_descriptions = {
         'end_artefact':      'Near contig end (assembly artefact)',
@@ -428,11 +491,14 @@ def run_classify_clipping(
         n = label_counts.get(label, 0)
         if n > 0:
             pct = 100 * n / total if total else 0
-            desc = label_descriptions.get(label, label)
-            print(f"  {label:<22s}  {n:>6,}  ({pct:5.1f}%)  {desc}")
+            print(f"  {label:<22s}  {n:>6,}  ({pct:5.1f}%)  "
+                  f"{label_descriptions.get(label, label)}")
 
     print(f"\n  Total positions classified: {total:,}")
-    print(f"  Report written to: {output}")
+    if repeat_stats:
+        n_with = sum(1 for s in repeat_stats.values() if s['repeat_coverage_pct'] > 0)
+        print(f"  Contigs with self-BLAST repeats: {n_with:,}/{len(repeat_stats):,}")
+    print(f"  Report: {output}")
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -450,53 +516,52 @@ Classification labels
   end_artefact      Near contig terminus (<500 bp); likely assembly edge noise.
   repeat_collapse   Coverage spike and/or low-entropy clipped bases.
                     Boundary of a collapsed tandem or low-complexity repeat.
+                    Self-BLAST confirmation adds high-confidence evidence.
   deletion_artefact Local depth drop. Internal deletion, local assembly collapse,
                     or a genuine genomic deletion relative to the reference.
   chimera_candidate Discordant pairs + large insert fraction, especially when
                     paired with a taxonomy shift in the chimera windows file.
-                    Prioritise for manual review or splitting.
   sv_candidate      Discordant/large-insert signal without depth anomaly or
                     taxon shift. Possible inversion, translocation, or mobile
                     element insertion.
   low_confidence    Evidence below threshold or read count too low to classify.
 
-Taxonomy cross-reference
-------------------------
-  --taxonomy-windows  chimera_read_windows.tsv from check-read-chimeras.
-                      Any position within --taxonomy-flank bp of a shifted
-                      window gets taxonomy_shift=True and contributes +3 to
-                      the chimera_candidate score.
+Self-BLAST (--self-blast, requires --assembly and BLAST+)
+---------------------------------------------------------
+  Each contig with clipping positions is BLASTed against itself.
+  Alignments >= --self-blast-min-len bp at >= --self-blast-min-identity % identity
+  identify internally duplicated regions (thresholds from the anvi'o long-read
+  benchmarking workflow). Two new output columns are added:
+    repeat_blast_cov_pct  % of contig covered by internal repeats
+    in_repeat_region      True when the clipping position falls inside a repeat
+
+Taxonomy cross-reference (--taxonomy-windows)
+----------------------------------------------
+  chimera_read_windows.tsv from check-read-chimeras. Any position within
+  --taxonomy-flank bp of a shifted window gets taxonomy_shift=True and
+  contributes +3 to the chimera_candidate score.
 
 Examples
 --------
-  # Basic: BAM evidence only
+  # BAM evidence only
   mamisa classify-clipping \\
-    --bam mapping.bam \\
-    --misassemblies misasm_dir/ \\
-    --output clipping_classified.tsv
+    --bam mapping.bam -m misassemblies/ -o classified.tsv
 
-  # With taxonomy cross-reference
+  # Full: taxonomy cross-reference + self-BLAST
   mamisa classify-clipping \\
-    --bam mapping.bam \\
-    --misassemblies misasm_dir/ \\
+    --bam mapping.bam -m misassemblies/ \\
+    --assembly assembly.fa --self-blast \\
     --taxonomy-windows chimera_dir/chimera_read_windows.tsv \\
-    --output clipping_classified.tsv
-
-  # Selective: only classify high-coverage clipping sites
-  mamisa classify-clipping \\
-    --bam mapping.bam \\
-    --misassemblies misasm_dir/ \\
-    --min-clip-coverage 50 \\
-    --output clipping_classified.tsv
+    -o classified.tsv
         """
     )
 
     parser.add_argument('--bam', type=Path, required=True,
                         help='Sorted, indexed BAM file (reads mapped to assembly)')
     parser.add_argument('-m', '--misassemblies', type=Path, required=True,
-                        help='Directory containing *-clipping.txt files from anvi\'o')
+                        help='Directory with *-clipping.txt files from anvi\'o')
     parser.add_argument('-o', '--output', type=Path, required=True,
-                        help='Output classification TSV file')
+                        help='Output classification TSV')
 
     parser.add_argument('--min-mapq', type=int, default=20,
                         help='Minimum mapping quality (default: 20)')
@@ -505,15 +570,25 @@ Examples
     parser.add_argument('--min-clip-coverage', type=int, default=0, metavar='N',
                         help='Only classify positions with ≥N clipped reads (default: 0 = all)')
 
+    # Taxonomy cross-reference
     parser.add_argument('--taxonomy-windows', type=Path, metavar='TSV',
-                        help='chimera_read_windows.tsv from check-read-chimeras '
-                             '(enables taxonomy_shift cross-reference)')
+                        help='chimera_read_windows.tsv from check-read-chimeras')
     parser.add_argument('--taxonomy-flank', type=int, default=5000, metavar='BP',
-                        help='Extend taxonomy shift windows by this many bp on each side '
-                             '(default: 5000)')
+                        help='Extend shift windows by this many bp on each side (default: 5000)')
+
+    # Self-BLAST
+    parser.add_argument('--assembly', type=Path, metavar='FASTA',
+                        help='Assembly FASTA — required for --self-blast')
+    parser.add_argument('--self-blast', action='store_true',
+                        help='Run self-BLAST repeat detection (requires --assembly and BLAST+)')
+    parser.add_argument('--self-blast-min-len', type=int, default=200, metavar='BP',
+                        help='Minimum self-BLAST alignment length (default: 200)')
+    parser.add_argument('--self-blast-min-identity', type=float, default=80.0,
+                        metavar='PCT',
+                        help='Minimum self-BLAST identity %% (default: 80)')
 
     parser.add_argument('--dry-run', action='store_true',
-                        help='Show what would be done without processing the BAM')
+                        help='Show what would be done without running')
 
     parser.set_defaults(func=run)
     return parser
@@ -523,18 +598,27 @@ def run(args):
     validate_file_exists(args.bam, "BAM file")
     validate_dir_exists(args.misassemblies, "Misassemblies directory")
 
+    if args.self_blast and not args.assembly:
+        log_error("--self-blast requires --assembly")
+        sys.exit(1)
+    if args.assembly:
+        validate_file_exists(args.assembly, "Assembly FASTA")
     if args.taxonomy_windows and not args.taxonomy_windows.exists():
         log_error(f"Taxonomy windows file not found: {args.taxonomy_windows}")
         sys.exit(1)
 
     run_classify_clipping(
-        bam_file=args.bam,
-        misassembly_dir=args.misassemblies,
-        output=args.output,
-        min_mapq=args.min_mapq,
-        window=args.window,
-        min_clip_coverage=args.min_clip_coverage,
-        taxonomy_windows=args.taxonomy_windows,
-        taxonomy_flank=args.taxonomy_flank,
-        dry_run=args.dry_run,
+        bam_file              = args.bam,
+        misassembly_dir       = args.misassemblies,
+        output                = args.output,
+        min_mapq              = args.min_mapq,
+        window                = args.window,
+        min_clip_coverage     = args.min_clip_coverage,
+        taxonomy_windows      = args.taxonomy_windows,
+        taxonomy_flank        = args.taxonomy_flank,
+        assembly              = args.assembly,
+        run_self_blast        = args.self_blast,
+        self_blast_min_len    = args.self_blast_min_len,
+        self_blast_min_identity = args.self_blast_min_identity,
+        dry_run               = args.dry_run,
     )
