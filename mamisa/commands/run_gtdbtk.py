@@ -5,6 +5,7 @@ Wrapper for running GTDB-Tk taxonomy classification
 """
 
 import sys
+import shlex
 import subprocess
 import argparse
 import shutil
@@ -31,11 +32,10 @@ def check_gtdbtk_available() -> bool:
 def get_gtdbtk_version() -> Optional[str]:
     """Get GTDB-Tk version"""
     try:
-        result = subprocess.run(['gtdbtk', '--version'], 
-                              capture_output=True, text=True, check=True)
-        version = result.stdout.strip()
-        return version
-    except:
+        result = subprocess.run(['gtdbtk', '--version'],
+                                capture_output=True, text=True, check=True)
+        return result.stdout.strip()
+    except Exception:
         return None
 
 
@@ -201,10 +201,10 @@ def run(args):
     if version:
         log_info(f"GTDB-Tk version: {version}")
     
-    # Parse extra arguments
+    # Parse extra arguments — use shlex.split so quoted values with spaces are handled
     extra_args = []
     if args.gtdbtk_args:
-        extra_args = args.gtdbtk_args.split()
+        extra_args = shlex.split(args.gtdbtk_args)
     
     # Validate mash database if provided
     if args.mash_db:

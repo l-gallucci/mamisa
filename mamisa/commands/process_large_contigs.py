@@ -22,9 +22,14 @@ from ..utils.logging import log_info, log_error, log_warning, print_header, prin
 def safe_filename(name: str) -> str:
     """
     Sanitize a contig name for use as a filename.
-    Replaces any character that is not alphanumeric, dot, hyphen, or underscore.
+    Replaces characters outside [A-Za-z0-9._-] with underscores, then appends
+    a short hash of the original name to prevent collisions when two distinct
+    names map to the same sanitised string.
     """
-    return re.sub(r'[^\w.\-]', '_', name)
+    import hashlib
+    sanitised = re.sub(r'[^\w.\-]', '_', name)
+    suffix = hashlib.md5(name.encode()).hexdigest()[:6]
+    return f"{sanitised}_{suffix}"
 
 
 def extract_large_contigs(assembly: Path, max_length: int, output_dir: Path) -> Tuple[int, int]:

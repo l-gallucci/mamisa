@@ -7,11 +7,12 @@ from setuptools import setup, find_packages
 from pathlib import Path
 
 # Read version from __init__.py
-version = {}
-with open("mamisa/__init__.py") as f:
-    for line in f:
-        if line.startswith("__version__"):
-            exec(line, version)
+import re
+_version_match = re.search(
+    r'^__version__\s*=\s*["\']([^"\']+)["\']',
+    open("mamisa/__init__.py").read(),
+)
+version = {"__version__": _version_match.group(1) if _version_match else "0.0.0"}
 
 # Read README
 readme_file = Path(__file__).parent / "README.md"

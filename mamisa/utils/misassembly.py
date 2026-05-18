@@ -30,12 +30,26 @@ def parse_clipping_files(clipping_files: List[Path]) -> Dict[str, List[int]]:
         log_info(f"  Reading: {file_path.name}")
         with open(file_path) as f:
             f.readline()  # skip header
-            for line in f:
-                if line.strip():
-                    fields = line.strip().split('\t')
-                    contig_name = fields[0]
+            for lineno, line in enumerate(f, start=2):
+                if not line.strip():
+                    continue
+                fields = line.strip().split('\t')
+                if len(fields) < 3:
+                    log_warning(
+                        f"Skipping malformed line {lineno} in {file_path.name} "
+                        f"(expected ≥3 fields, got {len(fields)})"
+                    )
+                    continue
+                contig_name = fields[0]
+                try:
                     position = int(fields[2])
-                    clipping_positions[contig_name].append(position)
+                except ValueError:
+                    log_warning(
+                        f"Skipping line {lineno} in {file_path.name}: "
+                        f"position '{fields[2]}' is not an integer"
+                    )
+                    continue
+                clipping_positions[contig_name].append(position)
 
     for contig in clipping_positions:
         clipping_positions[contig].sort()
