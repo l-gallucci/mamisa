@@ -105,6 +105,35 @@ conda run -n gunc mamisa run-gunc --genome-dir bins/ --output gunc_out/ \
 # or activate the tool env, which also puts `mamisa` on PATH if installed there
 ```
 
+### Fastest path — let MaMISA configure the workflow
+
+Two helper commands remove the manual editing. From the repo (after
+`pip install -e .`):
+
+```bash
+# 1. point the Snakemake envs at this checkout, write config paths, build envs
+mamisa setup-workflow \
+    --genomes-dir bins/ --genome-ext fa --threads 40 \
+    --install                         # --install builds every per-rule conda env
+
+# 2a. already have the databases? just register their locations
+mamisa fetch-databases \
+    --gtdbtk-data /data/gtdbtk_r220 \
+    --gunc-db     /data/gunc/gunc_db_progenomes2.1.dmnd \
+    --checkm2-db  /data/checkm2/uniref100.KO.1.dmnd
+
+# 2b. or download the missing ones (runs each tool's downloader in its env)
+mamisa fetch-databases --download --db-dir /data/mamisa_dbs
+
+# 3. run it
+snakemake --use-conda --cores 40 -s workflow/Snakefile --configfile workflow/config.yaml
+```
+
+`setup-workflow` edits `workflow/envs/*.yaml` (pip → `-e <repo>`) and the paths in
+`workflow/config.yaml`; `fetch-databases` either validates an existing database
+and writes its path into the config, or downloads it with the tool's own
+downloader. Both support `--dry-run`.
+
 ---
 
 ## Complete Workflow
