@@ -88,6 +88,7 @@ def run_chimera_check(
     extensions: List[str],
     gtdbtk_dir: Optional[Path],
     checkm2_file: Optional[Path],
+    gunc_dir: Optional[Path],
     gc_window: int,
     gc_step: int,
     taxonomy_level: str,
@@ -110,6 +111,13 @@ def run_chimera_check(
     if checkm2_file:
         contamination_map = _load_contamination(checkm2_file)
         log_info(f"CheckM2 contamination loaded for {len(contamination_map):,} genomes")
+
+    gunc_map: Dict[str, Dict] = {}
+    if gunc_dir:
+        from ..utils.chimera import parse_gunc_output
+        gunc_map = parse_gunc_output(gunc_dir)
+        if gunc_map:
+            log_info(f"GUNC results loaded for {len(gunc_map):,} genomes")
 
     print_section("Scanning bin files")
 
@@ -156,6 +164,11 @@ def run_chimera_check(
         # Contamination
         contamination = contamination_map.get(bin_name)
 
+        # GUNC gene-level taxonomic consistency
+        gunc_record = gunc_map.get(bin_name, {})
+        gunc_fail = (not gunc_record['pass_gunc']) if gunc_record else None
+        gunc_css = gunc_record.get('css') if gunc_record else None
+
         # Risk score
         risk, reasons = assess_chimera_risk(
             gc_delta=gc_delta,
@@ -164,6 +177,8 @@ def run_chimera_check(
             contamination=contamination,
             windowed_gc_delta=windowed_delta,
             taxonomy_warning=tax_warn,
+            gunc_fail=gunc_fail,
+            gunc_css=gunc_css,
         )
         risk_counts[risk] = risk_counts.get(risk, 0) + 1
 
@@ -192,6 +207,8 @@ def run_chimera_check(
             ),
             'gtdbtk_taxonomy': taxon,
             'gtdbtk_warning': tax_warn,
+            'gunc_pass': ('N/A' if not gunc_record else gunc_record['pass_gunc']),
+            'gunc_css': ('N/A' if gunc_css is None else f"{gunc_css:.3f}"),
             'chimera_risk': risk,
             'reasons': ' | '.join(reasons),
         })
@@ -201,6 +218,7 @@ def run_chimera_check(
             'bin', 'n_contigs', 'is_circular_candidate',
             'gc_mean_pct', 'gc_delta_pct', 'gc_cv_pct', 'windowed_gc_delta_pct',
             'checkm2_contamination', 'gtdbtk_taxonomy', 'gtdbtk_warning',
+            'gunc_pass', 'gunc_css',
             'chimera_risk', 'reasons',
         ]
         with open(output_file, 'w', newline='') as f:
@@ -272,6 +290,8 @@ Examples
                         help='GTDB-Tk output directory (adds taxonomy-based signals)')
     parser.add_argument('--checkm2-report', type=Path,
                         help='CheckM2 quality_report.tsv (adds contamination signal)')
+    parser.add_argument('--gunc-dir', type=Path,
+                        help='GUNC output directory (adds gene-level clade-consistency signal)')
 
     # GC window parameters
     parser.add_argument('--gc-window', type=int, default=5000,
@@ -303,6 +323,9 @@ def run(args):
         log_error(f"CheckM2 report not found: {args.checkm2_report}")
         sys.exit(1)
 
+    if args.gunc_dir:
+        validate_dir_exists(args.gunc_dir, "GUNC directory")
+
     if args.gc_step >= args.gc_window:
         log_warning(
             f"--gc-step ({args.gc_step}) >= --gc-window ({args.gc_window}); "
@@ -319,6 +342,7 @@ def run(args):
         extensions=extensions,
         gtdbtk_dir=args.gtdbtk_dir,
         checkm2_file=args.checkm2_report,
+        gunc_dir=args.gunc_dir,
         gc_window=args.gc_window,
         gc_step=args.gc_step,
         taxonomy_level=args.taxonomy_level,
