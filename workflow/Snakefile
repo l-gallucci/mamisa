@@ -1,0 +1,108 @@
+# MaMISA — MAG quality-control workflow
+#
+# Each rule runs in its OWN conda env (envs/*.yaml) because CheckM2, GTDB-Tk and
+# GUNC pin conflicting Python/pandas/numpy/DIAMOND and cannot share one env.
+# MaMISA itself is dependency-free and is pip-installed into every env.
+#
+# Pipeline (binning + anvi'o misassembly detection are assumed done upstream):
+#
+#   genomes_dir ─┬─> run-checkm2 ─┐
+#                ├─> run-gtdbtk ──┼─> organize-mags (HQ/MQ/LQ + rename)
+#                └─> run-gunc ────┘
+#                         └──────────> check-chimeras (GC + contamination + GUNC)
+#
+# Run:
+#   snakemake --use-conda --cores 20 -s workflow/Snakefile --configfile workflow/config.yaml
+
+import os
+
+configfile: "workflow/config.yaml"
+
+GENOMES = config["genomes_dir"]
+EXT     = config["genome_ext"]
+OUT     = config["outdir"]
+THREADS = config["threads"]
+
+
+rule all:
+    input:
+        f"{OUT}/chimera_report.tsv",
+        f"{OUT}/organized/merged_quality.tsv",
+
+
+rule run_checkm2:
+    input:
+        genomes=GENOMES,
+    output:
+        report=f"{OUT}/checkm2/quality_report.tsv",
+    params:
+        outdir=f"{OUT}/checkm2",
+        db=("--database " + config["checkm2_db"]) if config.get("checkm2_db") else "",
+    threads: THREADS
+    conda:
+        "envs/checkm2.yaml"
+    shell:
+        "mamisa run-checkm2 --genome-dir {input.genomes} --output {params.outdir} "
+        "--extension {EXT} --threads {threads} --force {params.db}"
+
+
+rule run_gtdbtk:
+    input:
+        genomes=GENOMES,
+    output:
+        # GTDB-Tk writes bac120/ar53 summaries whose exact set varies; mark the dir
+        outdir=directory(f"{OUT}/gtdbtk"),
+    threads: THREADS
+    conda:
+        "envs/gtdbtk.yaml"
+    shell:
+        "GTDBTK_DATA_PATH={config[gtdbtk_data]} "
+        "mamisa run-gtdbtk --genome-dir {input.genomes} --output {output.outdir} "
+        "--extension {EXT} --cpus {threads}"
+
+
+rule run_gunc:
+    input:
+        genomes=GENOMES,
+    output:
+        outdir=directory(f"{OUT}/gunc"),
+    threads: THREADS
+    conda:
+        "envs/gunc.yaml"
+    shell:
+        "mamisa run-gunc --genome-dir {input.genomes} --output {output.outdir} "
+        "--file-suffix .{EXT} --threads {threads} --db-file {config[gunc_db]}"
+
+
+rule organize_mags:
+    input:
+        checkm2=f"{OUT}/checkm2/quality_report.tsv",
+        gtdbtk=f"{OUT}/gtdbtk",
+    output:
+        merged=f"{OUT}/organized/merged_quality.tsv",
+    params:
+        outdir=f"{OUT}/organized",
+        checkm2_root=f"{OUT}/checkm2",
+    conda:
+        "envs/mamisa.yaml"
+    shell:
+        "mamisa organize-mags --checkm2-root {params.checkm2_root} "
+        "--genomes-dir {GENOMES} --gtdbtk-dir {input.gtdbtk} "
+        "--output {params.outdir} --rename --copy "
+        "--sample-regex '{config[sample_regex]}' --tax-level {config[tax_level]} "
+        "--extensions {EXT}"
+
+
+rule check_chimeras:
+    input:
+        checkm2=f"{OUT}/checkm2/quality_report.tsv",
+        gtdbtk=f"{OUT}/gtdbtk",
+        gunc=f"{OUT}/gunc",
+    output:
+        report=f"{OUT}/chimera_report.tsv",
+    conda:
+        "envs/mamisa.yaml"
+    shell:
+        "mamisa check-chimeras --bins-dir {GENOMES} --output {output.report} "
+        "--gtdbtk-dir {input.gtdbtk} --checkm2-report {input.checkm2} "
+        "--gunc-dir {input.gunc} --extensions {EXT}"

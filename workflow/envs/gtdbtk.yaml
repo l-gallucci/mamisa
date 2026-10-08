@@ -1,0 +1,10 @@
+name: mamisa-gtdbtk
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - gtdbtk
+  - pip
+  - pip:
+      # Until published to PyPI, replace `mamisa` with: -e /absolute/path/to/mamisa
+      - mamisa
