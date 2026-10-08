@@ -5,18 +5,46 @@ A comprehensive toolkit for metagenomic assembly quality control and filtering.
 ## Overview
 
 MaMISA provides a set of commands that cover the full workflow from raw assembly to
-taxonomically classified, quality-filtered genomes:
+taxonomically classified, quality-filtered genomes.
 
-| Command | Purpose |
-|---|---|
-| `process-large-contigs` | Extract, QC, and filter large contigs before binning |
-| `check-read-chimeras` | Detect chimeric contigs via read-level taxonomy (Kraken2 + BAM) |
-| `check-chimeras` | Detect chimeric MAGs via GC composition and GTDB-Tk signals |
-| `classify-clipping` | Classify each clipping position with BAM evidence |
-| `filter-misassemblies` | Split or remove contigs at misassembly positions |
-| `remove-hq-contigs` | Remove HQ genome contigs from an assembly |
-| `filter-checkm2` | Organise genomes into quality tiers from CheckM2 results |
-| `run-gtdbtk` | Run GTDB-Tk taxonomy classification |
+### Commands at a glance
+
+**Assembly QC & misassembly handling**
+
+| Command | What it does | Example |
+|---|---|---|
+| `process-large-contigs` | Extract, QC and filter large contigs before binning | `mamisa process-large-contigs -a assembly.fa -o large/` |
+| `classify-clipping` | Label each clipping position (repeat/deletion/**chimeric_join**/…) from BAM evidence | `mamisa classify-clipping --bam map.bam -m mis/ -o clip.tsv` |
+| `filter-misassemblies` | Split or remove contigs at misassembly positions | `mamisa filter-misassemblies -a assembly.fa -m mis/ -o clean.fa` |
+| `remove-hq-contigs` | Remove known HQ-genome contigs from an assembly | `mamisa remove-hq-contigs -a assembly.fa --hq-dir hq/ -o out.fa` |
+| `check-zero-coverage` | Validate no-coverage regions via BLAST + k-mers | `mamisa check-zero-coverage --assembly assembly.fa ...` |
+
+**Chimera detection**
+
+| Command | What it does | Example |
+|---|---|---|
+| `check-read-chimeras` | Chimeras from read-level taxonomy (Kraken2 + BAM) | `mamisa check-read-chimeras --bam map.bam --kraken2-output k2.txt -o chim/` |
+| `check-chimeras` | Chimeric MAGs from GC + contamination + **GUNC** + GTDB signals | `mamisa check-chimeras --bins-dir bins/ --gunc-dir gunc/ -o report.tsv` |
+| `run-gunc` | Gene-level chimerism/contamination (GUNC wrapper) | `mamisa run-gunc --genome-dir bins/ -o gunc/ --db-file gunc.dmnd` |
+
+**MAG quality & taxonomy**
+
+| Command | What it does | Example |
+|---|---|---|
+| `run-checkm2` | Completeness/contamination (CheckM2 wrapper) | `mamisa run-checkm2 --genome-dir bins/ -o checkm2/ --threads 40` |
+| `run-gtdbtk` | Taxonomy classification (GTDB-Tk wrapper) | `mamisa run-gtdbtk --genome-dir bins/ -o gtdbtk/ --cpus 40` |
+| `organize-mags` | Split genomes into HQ/MQ/LQ, rename `<sample>__<taxon>__<orig>` | `mamisa organize-mags --checkm2-root checkm2/ --genomes-dir bins/ --gtdbtk-dir gtdbtk/ -o filtered/ --rename --copy` |
+
+**Setup & environment helpers**
+
+| Command | What it does | Example |
+|---|---|---|
+| `setup-workflow` | Configure the Snakemake workflow (env yamls + config), optionally build envs | `mamisa setup-workflow --genomes-dir bins/ --gunc-env gunc --checkm2-env checkm2` |
+| `fetch-databases` | Register existing databases, or download missing ones | `mamisa fetch-databases --gtdbtk-data /db/gtdbtk --gunc-db /db/gunc.dmnd` |
+| `check-envs` | Report tool versions per conda env + MaMISA compatibility | `mamisa check-envs --gunc-env gunc --checkm2-env checkm2` |
+
+See [Step-by-Step Guide](#step-by-step-guide) for the full pipeline and
+[Command Reference](#command-reference) for every flag.
 
 ---
 
@@ -683,6 +711,64 @@ Optional:
   --db-file PATH              GUNC diamond database (.dmnd); else uses $GUNC_DB
   --tiers LIST                Tiers to process (default: HQ,MQ,LQ)
   --gunc-args STR             Extra arguments passed to gunc run
+```
+
+### setup-workflow
+
+Configures the Snakemake workflow: points `workflow/envs/*.yaml` at this checkout,
+writes paths into `workflow/config.yaml`, validates database kinds, and (when env
+names are given) sanity-checks them. `--install` builds every per-rule conda env.
+
+```
+Optional:
+  --repo PATH                 MaMISA checkout (default: auto-detected)
+  --workflow-dir PATH         Workflow dir (default: <repo>/workflow)
+  --genomes-dir PATH          Input genomes directory (config)
+  --genome-ext STR            Genome extension (config)
+  --outdir PATH / --threads INT
+  --gtdbtk-data DIR           GTDB-Tk data DIRECTORY
+  --gunc-db FILE              GUNC .dmnd FILE
+  --checkm2-db FILE           CheckM2 .dmnd FILE
+  --sample-regex RE / --tax-level LEVEL
+  --mamisa-env / --checkm2-env / --gtdbtk-env / --gunc-env NAME
+                              Use these existing envs (sets use_named_envs)
+  --install                   Build per-rule conda envs (snakemake)
+  --no-check                  Skip the env sanity check
+  --dry-run
+```
+
+### fetch-databases
+
+Registers databases you already have (validated, written to config) or downloads
+missing ones with each tool's own downloader. Path KIND is enforced: GTDB-Tk =
+directory, GUNC and CheckM2 = `.dmnd` file.
+
+```
+Optional:
+  --config PATH               config.yaml to update (default: workflow/config.yaml)
+  --db-dir PATH               Where to download (default: ./databases)
+  --tools LIST                Which DBs (default: gtdbtk,gunc,checkm2)
+  --download                  Download any DB not supplied as an existing path
+  --gtdbtk-data DIR           Existing GTDB-Tk data DIRECTORY
+  --gunc-db FILE              Existing GUNC .dmnd FILE
+  --checkm2-db FILE           Existing CheckM2 .dmnd FILE
+  --gtdbtk-env / --gunc-env / --checkm2-env NAME   Env to run each downloader in
+  --dry-run
+```
+
+### check-envs
+
+Sanity-checks existing conda envs: reports each tool's version, whether MaMISA is
+importable there, and (for GUNC) pandas/numpy/python compatibility. Prints the
+exact install/fix command for anything that fails.
+
+```
+Optional (at least one):
+  --mamisa-env NAME           Env with the light CLI tools + MaMISA
+  --checkm2-env NAME          Env with CheckM2
+  --gtdbtk-env NAME           Env with GTDB-Tk
+  --gunc-env NAME             Env with GUNC
+  --repo PATH                 MaMISA checkout used in fix hints
 ```
 
 ---
