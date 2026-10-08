@@ -20,6 +20,7 @@ from pathlib import Path
 
 from .. import PACKAGE_ROOT
 from .setup_workflow import set_yaml_scalar, default_repo
+from ..utils.validation import check_db_path
 from ..utils.logging import log_info, log_warning, log_error, print_header, print_section
 
 
@@ -66,10 +67,13 @@ Downloads run inside the tool's conda env (override names with --*-env).
     parser.add_argument('--download', action='store_true',
                         help='Download any database not supplied as an existing path')
 
-    # existing database locations
-    parser.add_argument('--gtdbtk-data', type=Path, help='Existing GTDB-Tk data dir')
-    parser.add_argument('--gunc-db', type=Path, help='Existing GUNC .dmnd file')
-    parser.add_argument('--checkm2-db', type=Path, help='Existing CheckM2 .dmnd file')
+    # existing database locations (path KIND is checked per tool)
+    parser.add_argument('--gtdbtk-data', type=Path,
+                        help='Existing GTDB-Tk data DIRECTORY (GTDBTK_DATA_PATH)')
+    parser.add_argument('--gunc-db', type=Path,
+                        help='Existing GUNC database FILE (.dmnd)')
+    parser.add_argument('--checkm2-db', type=Path,
+                        help='Existing CheckM2 database FILE (.dmnd)')
 
     # conda env names used for downloads
     parser.add_argument('--gtdbtk-env', default='gtdbtk')
@@ -97,9 +101,12 @@ def _write_config(config_file: Path, key: str, value, dry_run: bool):
 def handle_gtdbtk(args, config_file):
     print_section("GTDB-Tk data")
     if args.gtdbtk_data:
-        if not args.gtdbtk_data.exists():
-            log_error(f"  Path does not exist: {args.gtdbtk_data}")
+        ok, msg = check_db_path(args.gtdbtk_data, 'gtdbtk')
+        if not ok:
+            log_error(f"  {msg}")
             return False
+        if msg:
+            log_warning(f"  {msg}")
         log_info(f"  Using existing: {args.gtdbtk_data}")
         _write_config(config_file, 'gtdbtk_data', args.gtdbtk_data.resolve(), args.dry_run)
         return True
@@ -125,9 +132,12 @@ def handle_gtdbtk(args, config_file):
 def handle_gunc(args, config_file):
     print_section("GUNC database")
     if args.gunc_db:
-        if not args.gunc_db.exists():
-            log_error(f"  Path does not exist: {args.gunc_db}")
+        ok, msg = check_db_path(args.gunc_db, 'gunc')
+        if not ok:
+            log_error(f"  {msg}")
             return False
+        if msg:
+            log_warning(f"  {msg}")
         log_info(f"  Using existing: {args.gunc_db}")
         _write_config(config_file, 'gunc_db', args.gunc_db.resolve(), args.dry_run)
         return True
@@ -155,9 +165,12 @@ def handle_gunc(args, config_file):
 def handle_checkm2(args, config_file):
     print_section("CheckM2 database")
     if args.checkm2_db:
-        if not args.checkm2_db.exists():
-            log_error(f"  Path does not exist: {args.checkm2_db}")
+        ok, msg = check_db_path(args.checkm2_db, 'checkm2')
+        if not ok:
+            log_error(f"  {msg}")
             return False
+        if msg:
+            log_warning(f"  {msg}")
         log_info(f"  Using existing: {args.checkm2_db}")
         _write_config(config_file, 'checkm2_db', args.checkm2_db.resolve(), args.dry_run)
         return True

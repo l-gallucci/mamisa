@@ -107,32 +107,47 @@ conda run -n gunc mamisa run-gunc --genome-dir bins/ --output gunc_out/ \
 
 ### Fastest path — let MaMISA configure the workflow
 
-Two helper commands remove the manual editing. From the repo (after
-`pip install -e .`):
+Helper commands remove the manual editing. From the repo (after `pip install -e .`):
 
 ```bash
-# 1. point the Snakemake envs at this checkout, write config paths, build envs
-mamisa setup-workflow \
-    --genomes-dir bins/ --genome-ext fa --threads 40 \
-    --install                         # --install builds every per-rule conda env
+# A. I DON'T have envs yet — let Snakemake build one per rule
+mamisa setup-workflow --genomes-dir bins/ --genome-ext fa --threads 40 --install
 
-# 2a. already have the databases? just register their locations
+# B. I ALREADY have conda envs — point MaMISA at them; it sanity-checks each
+mamisa setup-workflow --genomes-dir bins/ --threads 40 \
+    --mamisa-env mamisa --checkm2-env checkm2 --gtdbtk-env gtdbtk --gunc-env gunc
+#   -> records the env names, sets use_named_envs, and reports each tool's
+#      version + whether it is compatible (and what to install if not).
+#      Re-check any time with:  mamisa check-envs --gunc-env gunc ...
+```
+
+Databases — the path KIND is checked per tool (GTDB-Tk = **directory**, GUNC and
+CheckM2 = **.dmnd file**):
+
+```bash
+# already have them? register their locations (validated, written to config)
 mamisa fetch-databases \
-    --gtdbtk-data /data/gtdbtk_r220 \
-    --gunc-db     /data/gunc/gunc_db_progenomes2.1.dmnd \
-    --checkm2-db  /data/checkm2/uniref100.KO.1.dmnd
+    --gtdbtk-data /data/gtdbtk_r220 \                  # a DIRECTORY
+    --gunc-db     /data/gunc/gunc_db_progenomes2.1.dmnd \  # a FILE
+    --checkm2-db  /data/checkm2/uniref100.KO.1.dmnd        # a FILE
 
-# 2b. or download the missing ones (runs each tool's downloader in its env)
+# or download the missing ones (runs each tool's own downloader in its env)
 mamisa fetch-databases --download --db-dir /data/mamisa_dbs
+```
 
-# 3. run it
+Then run:
+
+```bash
+# mode A (Snakemake-built envs)
 snakemake --use-conda --cores 40 -s workflow/Snakefile --configfile workflow/config.yaml
+# mode B (your named envs) — NO --use-conda; each rule is wrapped in conda run -n
+snakemake --cores 40 -s workflow/Snakefile --configfile workflow/config.yaml
 ```
 
 `setup-workflow` edits `workflow/envs/*.yaml` (pip → `-e <repo>`) and the paths in
-`workflow/config.yaml`; `fetch-databases` either validates an existing database
-and writes its path into the config, or downloads it with the tool's own
-downloader. Both support `--dry-run`.
+`workflow/config.yaml`, validates database kinds, and sanity-checks supplied envs;
+`fetch-databases` validates or downloads each database; `check-envs` reports tool
+versions and compatibility. All support `--dry-run`.
 
 ---
 

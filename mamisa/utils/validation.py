@@ -71,6 +71,42 @@ def validate_dir_exists(dirpath: Path, description: str = "Directory") -> Path:
     return dirpath
 
 
+# Database path requirements per tool: 'dir' or 'file'.
+#   GTDB-Tk  → GTDBTK_DATA_PATH is a directory (the release data dir)
+#   GUNC     → --db_file is a .dmnd FILE
+#   CheckM2  → --database_path is a .dmnd FILE
+DB_PATH_KIND = {
+    'gtdbtk': 'dir',
+    'gunc': 'file',
+    'checkm2': 'file',
+}
+
+
+def check_db_path(path: Path, tool: str):
+    """
+    Check that a database path is the right KIND for the tool (directory vs file).
+
+    Returns (ok: bool, message: str). Does not raise or exit, so callers can
+    report and continue.
+    """
+    kind = DB_PATH_KIND.get(tool)
+    if kind is None:
+        return True, ''
+    path = Path(path)
+    if not path.exists():
+        return False, f"{tool}: path does not exist: {path}"
+    if kind == 'dir' and not path.is_dir():
+        return False, (f"{tool} needs a DIRECTORY (the GTDB-Tk data dir), "
+                       f"but this is a file: {path}")
+    if kind == 'file' and not path.is_file():
+        hint = " (expected the .dmnd file)" if tool in ('gunc', 'checkm2') else ""
+        return False, (f"{tool} needs a FILE{hint}, but this is a directory: {path}")
+    if kind == 'file' and tool in ('gunc', 'checkm2') and path.suffix != '.dmnd':
+        return True, (f"{tool}: expected a .dmnd file; got {path.name} "
+                      f"— continuing, but double-check this is the DIAMOND database")
+    return True, ''
+
+
 def validate_output_path(filepath: Path, overwrite: bool = False) -> Path:
     """
     Validate output file path

@@ -33,9 +33,16 @@ Or edit by hand: set `genomes_dir`, `genome_ext`, the database paths
 
 ## Run
 
+Two modes, set by `use_named_envs` in config.yaml:
+
 ```bash
-# from the repo root
+# mode A — Snakemake builds one conda env per rule from envs/*.yaml
 snakemake --use-conda --cores 20 -s workflow/Snakefile --configfile workflow/config.yaml
+
+# mode B — use YOUR existing named envs (use_named_envs: true, set by
+#          `setup-workflow --gunc-env ... --checkm2-env ...`); NO --use-conda,
+#          each rule is wrapped in `conda run -n <env>`
+snakemake --cores 20 -s workflow/Snakefile --configfile workflow/config.yaml
 
 # preview the plan without running
 snakemake -n -s workflow/Snakefile --configfile workflow/config.yaml

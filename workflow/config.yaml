@@ -24,3 +24,16 @@ checkm2_db: ""                                                     # optional; b
 # organize-mags renaming
 sample_regex: "^([^._]+)"   # capture group 1 = sample id from the filename
 tax_level: "genus"          # rank used in the renamed output
+
+# ── Environment mode ────────────────────────────────────────────────────────
+# Two ways to supply the conflicting tools:
+#   use_named_envs: false  → run `snakemake --use-conda`; Snakemake builds one
+#                            env per rule from envs/*.yaml (default).
+#   use_named_envs: true   → run plain `snakemake` (NO --use-conda); each rule is
+#                            wrapped in `conda run -n <env_*>` using YOUR envs.
+# `mamisa setup-workflow --gunc-env ... --checkm2-env ...` sets these for you.
+use_named_envs: false
+env_mamisa: ""     # light CLI tools + MaMISA (organize-mags, check-chimeras)
+env_checkm2: ""    # CheckM2
+env_gtdbtk: ""     # GTDB-Tk
+env_gunc: ""       # GUNC

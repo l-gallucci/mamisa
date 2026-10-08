@@ -19,6 +19,7 @@ import subprocess
 from pathlib import Path
 
 from .. import PACKAGE_ROOT
+from ..utils.validation import check_db_path
 from ..utils.logging import log_info, log_warning, log_error, print_header, print_section
 
 
@@ -94,16 +95,28 @@ Examples:
     parser.add_argument('--genome-ext', default=None)
     parser.add_argument('--outdir', type=Path, default=None)
     parser.add_argument('--threads', type=int, default=None)
-    parser.add_argument('--gtdbtk-data', type=Path, default=None)
-    parser.add_argument('--gunc-db', type=Path, default=None)
-    parser.add_argument('--checkm2-db', type=Path, default=None)
+    parser.add_argument('--gtdbtk-data', type=Path, default=None,
+                        help='GTDB-Tk data DIRECTORY (GTDBTK_DATA_PATH)')
+    parser.add_argument('--gunc-db', type=Path, default=None,
+                        help='GUNC database FILE (.dmnd)')
+    parser.add_argument('--checkm2-db', type=Path, default=None,
+                        help='CheckM2 database FILE (.dmnd)')
     parser.add_argument('--sample-regex', default=None)
     parser.add_argument('--tax-level', default=None,
                         choices=['domain', 'phylum', 'class', 'order',
                                  'family', 'genus', 'species'])
 
+    # existing conda env names (enables the named-env run mode)
+    parser.add_argument('--mamisa-env', default=None,
+                        help='Existing env with the light CLI tools + MaMISA')
+    parser.add_argument('--checkm2-env', default=None, help='Existing env with CheckM2')
+    parser.add_argument('--gtdbtk-env', default=None, help='Existing env with GTDB-Tk')
+    parser.add_argument('--gunc-env', default=None, help='Existing env with GUNC')
+
     parser.add_argument('--install', action='store_true',
                         help='Build all per-rule conda envs via snakemake --conda-create-envs-only')
+    parser.add_argument('--no-check', action='store_true',
+                        help='Skip the env sanity check when env names are given')
     parser.add_argument('--dry-run', action='store_true',
                         help='Show what would change without writing')
 
@@ -146,16 +159,41 @@ def run(args):
         text = set_yaml_scalar(text, 'outdir', args.outdir, quote=True); updates.append('outdir')
     if args.threads is not None:
         text = set_yaml_scalar(text, 'threads', args.threads); updates.append('threads')
-    if args.gtdbtk_data is not None:
-        text = set_yaml_scalar(text, 'gtdbtk_data', args.gtdbtk_data, quote=True); updates.append('gtdbtk_data')
-    if args.gunc_db is not None:
-        text = set_yaml_scalar(text, 'gunc_db', args.gunc_db, quote=True); updates.append('gunc_db')
-    if args.checkm2_db is not None:
-        text = set_yaml_scalar(text, 'checkm2_db', args.checkm2_db, quote=True); updates.append('checkm2_db')
+    # database paths — validate KIND (dir vs file) per tool before recording
+    for flag_val, cfg_key, tool in (
+        (args.gtdbtk_data, 'gtdbtk_data', 'gtdbtk'),
+        (args.gunc_db, 'gunc_db', 'gunc'),
+        (args.checkm2_db, 'checkm2_db', 'checkm2'),
+    ):
+        if flag_val is None:
+            continue
+        ok, msg = check_db_path(flag_val, tool)
+        if not ok:
+            log_error(f"  {msg}")
+            sys.exit(1)
+        if msg:
+            log_warning(f"  {msg}")
+        text = set_yaml_scalar(text, cfg_key, flag_val, quote=True)
+        updates.append(cfg_key)
+
     if args.sample_regex is not None:
         text = set_yaml_scalar(text, 'sample_regex', args.sample_regex, quote=True); updates.append('sample_regex')
     if args.tax_level is not None:
         text = set_yaml_scalar(text, 'tax_level', args.tax_level, quote=True); updates.append('tax_level')
+
+    # existing env names — recording them switches the workflow to named-env mode
+    env_map = {
+        'env_mamisa': args.mamisa_env,
+        'env_checkm2': args.checkm2_env,
+        'env_gtdbtk': args.gtdbtk_env,
+        'env_gunc': args.gunc_env,
+    }
+    any_env = any(v for v in env_map.values())
+    for key, val in env_map.items():
+        if val:
+            text = set_yaml_scalar(text, key, val, quote=True); updates.append(key)
+    if any_env:
+        text = set_yaml_scalar(text, 'use_named_envs', 'true'); updates.append('use_named_envs')
 
     if updates:
         if args.dry_run:
@@ -166,7 +204,26 @@ def run(args):
     else:
         log_info("  No config values passed; left unchanged")
 
-    # 3. optionally build the conda envs
+    # 3. sanity-check any env names the user supplied
+    provided_envs = {
+        'mamisa': args.mamisa_env,
+        'checkm2': args.checkm2_env,
+        'gtdbtk': args.gtdbtk_env,
+        'gunc': args.gunc_env,
+    }
+    provided_envs = {r: e for r, e in provided_envs.items() if e}
+    if provided_envs and not args.no_check and not args.dry_run:
+        print_section("Sanity-checking supplied envs")
+        if shutil.which('conda') is None:
+            log_warning("conda not found; skipping env sanity check")
+        else:
+            from .check_envs import run_checks
+            if not run_checks(provided_envs, repo):
+                log_error("\nOne or more envs are not compatible — see fix hints above.")
+                log_error("Re-run after fixing, or pass --no-check to skip this gate.")
+                sys.exit(1)
+
+    # 4. optionally build the conda envs
     if args.install:
         print_section("Building per-rule conda envs")
         if args.dry_run:
