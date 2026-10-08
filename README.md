@@ -35,6 +35,18 @@ mamisa --version
 mamisa --help
 ```
 
+### Running the tests
+
+```bash
+pip install -e ".[dev]"   # installs pytest
+pytest                    # 86 unit tests, no external tools needed
+```
+
+The suite covers the dependency-free logic: contig-id parsing, CheckM2 tiering,
+GC/GUNC chimera scoring, the SA-tag join detector, clipping classification,
+organize-mags renaming, per-tool database-path validation, and the config/env
+helpers.
+
 ### External tools (required per command)
 
 MaMISA's wrappers shell out to standard bioinformatics tools. A tool only needs
