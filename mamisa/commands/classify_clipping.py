@@ -4,6 +4,8 @@ MaMISA - classify-clipping command
 
 Classify each anvi'o soft-clipping position as one of:
   end_artefact      — within 500 bp of a contig terminus; assembly edge effect
+  chimeric_join     — clipped reads' supplementary alignments map to one other
+                      contig; the two contigs are joined here (Trigodet et al. 2025)
   repeat_collapse   — depth spike and/or low-entropy clipped bases; collapsed repeat
   deletion_artefact — local depth drop; internal deletion or coverage collapse
   chimera_candidate — discordant pairs + large inserts + optional taxonomy shift
@@ -22,6 +24,9 @@ Evidence signals used
   taxonomy_shift        True when a check-read-chimeras window overlaps this position
   repeat_blast_cov_pct  (optional) % of contig covered by self-BLAST repeat intervals
   in_repeat_region      (optional) True when clip_pos falls inside a self-BLAST repeat
+  sa_partner_contig     dominant other contig that clipped reads' supplementary
+                        alignments (SA:Z: tag) map to; join partner
+  sa_partner_fraction   fraction of clipped reads whose SA points to that partner
 
 BAM categories
 --------------
@@ -178,6 +183,13 @@ def classify_position(
     available, directly boost the repeat_collapse score:
       in_repeat_region = True  → +3  (position sits inside a known repeat)
       repeat_blast_cov_pct > 30% → +2  (repeat-rich contig, even if not directly inside)
+
+    Supplementary-alignment join signal (Trigodet et al. 2025): when the clipped
+    parts of reads at this position map consistently to ONE other contig, the two
+    contigs are likely joined here → chimeric_join. Read from the stats keys
+    sa_partner_contig / sa_partner_support / sa_partner_fraction.
+      support ≥ 3 and fraction > 0.6 → +4
+      support ≥ 3 and fraction > 0.3 → +2
     """
     evidence: List[str] = []
 
@@ -203,6 +215,7 @@ def classify_position(
     deletion_score = 0
     chimera_score  = 0
     sv_score       = 0
+    join_score     = 0
 
     # Depth ratio
     if not math.isnan(depth_ratio):
@@ -277,8 +290,21 @@ def classify_position(
         repeat_score += 1
         evidence.append(f'self_blast_repeat_{repeat_blast_cov_pct:.1f}pct')
 
+    # ── Supplementary-alignment join evidence ────────────────────────────────
+    sa_partner = stats.get('sa_partner_contig', 'N/A')
+    sa_support = int(stats.get('sa_partner_support', 0) or 0)
+    sa_frac    = _to_float(stats.get('sa_partner_fraction'))
+    if sa_partner not in ('N/A', '', None) and sa_support >= 3 and not math.isnan(sa_frac):
+        if sa_frac > 0.6:
+            join_score += 4
+            evidence.append(f'sa_join_{sa_partner}_{sa_frac:.2f}_(n={sa_support})')
+        elif sa_frac > 0.3:
+            join_score += 2
+            evidence.append(f'sa_join_weak_{sa_partner}_{sa_frac:.2f}_(n={sa_support})')
+
     # ── Decision ────────────────────────────────────────────────────────────
     scores = {
+        'chimeric_join':     join_score,
         'repeat_collapse':   repeat_score,
         'deletion_artefact': deletion_score,
         'chimera_candidate': chimera_score,
@@ -289,8 +315,11 @@ def classify_position(
     if max_score < 2:
         return 'low_confidence', 'Low', evidence
 
-    # biological priority for tie-breaking: chimera > repeat > deletion > sv
-    priority = ['chimera_candidate', 'repeat_collapse', 'deletion_artefact', 'sv_candidate']
+    # biological priority for tie-breaking:
+    #   chimeric_join (read-level junction to another contig) is the strongest,
+    #   then chimera_candidate > repeat > deletion > sv
+    priority = ['chimeric_join', 'chimera_candidate', 'repeat_collapse',
+                'deletion_artefact', 'sv_candidate']
     winner = max(priority, key=lambda c: scores[c])
 
     confidence = 'High' if max_score >= 5 else ('Medium' if max_score >= 3 else 'Low')
@@ -306,6 +335,7 @@ _OUTPUT_FIELDS = [
     'primary_reads_in_window', 'contig_mean_depth', 'depth_ratio',
     'discordant_fraction', 'large_insert_fraction', 'strand_fwd_fraction',
     'clipped_base_entropy', 'near_contig_end',
+    'n_clipped_reads', 'sa_partner_contig', 'sa_partner_support', 'sa_partner_fraction',
     'taxonomy_shift', 'repeat_blast_cov_pct', 'in_repeat_region',
     'classification', 'confidence', 'evidence',
 ]
@@ -475,11 +505,12 @@ def run_classify_clipping(
     total = sum(label_counts.values())
 
     label_order = [
-        'end_artefact', 'repeat_collapse', 'deletion_artefact',
+        'end_artefact', 'chimeric_join', 'repeat_collapse', 'deletion_artefact',
         'chimera_candidate', 'sv_candidate', 'low_confidence',
     ]
     label_descriptions = {
         'end_artefact':      'Near contig end (assembly artefact)',
+        'chimeric_join':     'Clipped reads map to one other contig (contig join)',
         'repeat_collapse':   'Repeat collapse / tandem repeat boundary',
         'deletion_artefact': 'Local deletion or coverage collapse',
         'chimera_candidate': 'Chimera candidate (discordant + insert anomaly)',

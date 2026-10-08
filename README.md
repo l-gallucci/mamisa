@@ -22,8 +22,11 @@ taxonomically classified, quality-filtered genomes:
 
 ## Installation
 
+MaMISA itself is **pure Python with no external dependencies** (Python ≥ 3.9), so
+it installs anywhere in seconds:
+
 ```bash
-git clone https://github.com/yourusername/mamisa.git
+git clone https://github.com/lgallucc/mamisa.git
 cd mamisa
 pip install -e .
 
@@ -34,29 +37,72 @@ mamisa --help
 
 ### External tools (required per command)
 
-| Command | Tool |
+MaMISA's wrappers shell out to standard bioinformatics tools. A tool only needs
+to be on `PATH` for the command that uses it.
+
+| Command | External tool(s) |
 |---|---|
 | `process-large-contigs` | CheckM2 |
-| `check-read-chimeras` | samtools, Kraken2 |
-| `check-chimeras` | (none beyond Python deps) |
-| `classify-clipping` | samtools |
-| `filter-misassemblies` | anvi'o (for upstream detection) |
-| `filter-checkm2` | CheckM2 |
+| `run-checkm2` | CheckM2 |
 | `run-gtdbtk` | GTDB-Tk |
+| `run-gunc` | GUNC + DIAMOND + Prodigal |
+| `check-read-chimeras` | samtools, Kraken2 |
+| `check-chimeras` | (none; `--gunc-dir` consumes GUNC output) |
+| `classify-clipping` | samtools (+ BLAST+ for `--self-blast`) |
+| `check-zero-coverage` | BLAST+ (`blastn`/`makeblastdb`), optional Meryl |
+| `filter-misassemblies` | anvi'o (upstream misassembly detection) |
+| `organize-mags` (was `filter-checkm2`) | (none; consumes CheckM2 + GTDB-Tk output) |
+
+### Why not one single environment?
+
+Everything in **one conda env is not feasible**: CheckM2, GTDB-Tk, GUNC and
+anvi'o each pin conflicting versions of Python / pandas / numpy / DIAMOND and
+will not co-solve. This is normal in metagenomics — the heavy annotators each
+get their own env. The light CLI tools, however, share one env happily.
+
+**Recommended layout:** one `mamisa` env with MaMISA + the light tools, plus one
+env per heavy annotator. MaMISA is dependency-free, so if you prefer you can also
+`pip install -e .` into each annotator env and skip env-switching.
 
 ```bash
-# anvi'o
-conda create -n anvio-9 -c conda-forge -c bioconda anvio=9
+# ── 1. Main env: MaMISA + light CLI tools (samtools, BLAST+, bedtools, Kraken2, Meryl)
+mamba create -n mamisa -c conda-forge -c bioconda \
+    python=3.10 samtools blast bedtools kraken2 meryl
+conda activate mamisa
+pip install -e .
 
-# CheckM2
-conda create -n checkm2 -c conda-forge -c bioconda checkm2
+# ── 2. CheckM2  (run-checkm2, process-large-contigs, organize-mags upstream)
+mamba create -n checkm2 -c conda-forge -c bioconda checkm2
+# checkm2 database: `checkm2 database --download`
 
-# GTDB-Tk
-conda create -n gtdbtk-2 -c conda-forge -c bioconda gtdbtk
+# ── 3. GTDB-Tk  (run-gtdbtk)
+mamba create -n gtdbtk -c conda-forge -c bioconda gtdbtk
 export GTDBTK_DATA_PATH=/path/to/gtdbtk_data
 
-# samtools (for BAM-based commands)
-conda install -c bioconda samtools
+# ── 4. GUNC  (run-gunc)  ── GUNC is OLD: pin versions or its recipe pulls
+#     pandas 3.x + a bleeding-edge Python that break it at runtime.
+mamba create -n gunc -c conda-forge -c bioconda \
+    "gunc=1.1.1" "python=3.10" "pandas>=2,<3" "numpy<2" diamond prodigal
+# GUNC database (~13 GB):
+#   conda activate gunc && gunc download_db ./gunc_db/
+#   export GUNC_DB=./gunc_db/gunc_db_progenomes2.1.dmnd
+
+# ── 5. anvi'o  (upstream: anvi-script-find-misassemblies → *-clipping.txt)
+mamba create -n anvio-9 -c conda-forge -c bioconda anvio=9
+```
+
+> **Verified (2026-10):** GUNC 1.1.1's Bioconda recipe declares `pandas>=2.0.0`
+> with no upper bound, so an unpinned install grabs pandas 3.x and Python 3.14+,
+> which crash GUNC. The pinned recipe above resolves to python 3.10, pandas 2.3,
+> numpy 1.26, diamond 2.1.24, prodigal 2.6.3 and runs cleanly. `mamisa run-gunc`
+> also runs an env-health check and refuses to launch a broken GUNC.
+
+To run a wrapper whose tool lives in another env without switching shells:
+
+```bash
+conda run -n gunc mamisa run-gunc --genome-dir bins/ --output gunc_out/ \
+    --file-suffix .fa --threads 20   # if mamisa is installed in that env
+# or activate the tool env, which also puts `mamisa` on PATH if installed there
 ```
 
 ---
@@ -405,6 +451,7 @@ Optional:
   -o, --output PATH           Output TSV (default: chimera_report.tsv)
   --gtdbtk-dir PATH           GTDB-Tk output directory (adds taxonomy signals)
   --checkm2-report PATH       CheckM2 report (adds contamination signal)
+  --gunc-dir PATH             GUNC output directory (adds gene-level clade-consistency signal)
   --gc-window INT             GC window size in bp (default: 5000)
   --gc-step INT               GC step in bp (default: 2500)
   --taxonomy-level STR        Taxonomy level for comparison (default: phylum)
@@ -426,8 +473,17 @@ Optional:
   --min-clip-coverage N       Only classify positions with ≥N clipped reads
   --taxonomy-windows TSV      chimera_read_windows.tsv from check-read-chimeras
   --taxonomy-flank BP         Extend shift windows by this many bp (default: 5000)
+  --assembly FASTA            Assembly FASTA — required for --self-blast
+  --self-blast                Self-BLAST repeat detection (needs --assembly + BLAST+)
   --dry-run
 ```
+
+Classification labels include `chimeric_join`: when the soft-clipped parts of
+reads at a position map (via their `SA:Z:` supplementary-alignment tag)
+consistently to **one other contig**, the two contigs are joined there. This is
+the read-level join signal from Trigodet et al. 2025 and needs no extra flag —
+it is computed automatically from the BAM. See columns `sa_partner_contig` /
+`sa_partner_fraction` in the output.
 
 ### filter-misassemblies
 
@@ -476,7 +532,12 @@ Optional:
   --stats PATH                Save statistics to TSV
 ```
 
-### filter-checkm2
+### organize-mags  (formerly `filter-checkm2`)
+
+Splits genomes into `Selected/HQ`, `Selected/MQ`, `Selected/LQ` by MiMAG tier,
+and can rename each output `<sample>__<taxon>__<original>` using the sample
+parsed from the filename and the GTDB-Tk taxonomy. `filter-checkm2` still works
+as a deprecated alias.
 
 ```
 Required:
@@ -492,10 +553,19 @@ Quality thresholds:
   --lq-comp-min FLOAT         LQ min completeness (default: 50)
   --lq-cont-max FLOAT         LQ max contamination (default: 10)
 
+Renaming (sample + taxonomy):
+  --rename                    Rename outputs as <sample>__<taxon>__<original>
+  --gtdbtk-dir PATH           GTDB-Tk summaries, for the <taxon> part of the name
+  --sample-regex RE           Capture group for the sample id
+                              (default: ^([^._]+) = token before first . or _)
+  --tax-level LEVEL           Rank used in name: domain..species (default: genus;
+                              falls back up ranks, NoTax if no GTDB hit)
+
 Other:
   --tiers LIST                Tiers to select (default: HQ,MQ,LQ)
   --extensions LIST           Genome extensions (default: fa,fasta,fna,...)
   --symlink | --copy          Link or copy files (default: symlink)
+  --name-map / --strip-prefix / --strip-suffix / --name-prefix / --name-suffix
   --dry-run
 ```
 
@@ -517,6 +587,48 @@ Optional:
   --gtdbtk-args STR           Extra arguments passed to gtdbtk
 ```
 
+### run-checkm2
+
+```
+Required (one of):
+  --selected-dir PATH         Directory with HQ/, MQ/, LQ/ subdirectories
+  --genome-dir PATH           Single directory with genome files
+
+Required:
+  -o, --output PATH           Output directory
+
+Optional:
+  --extension STR             Genome file extension (default: fa)
+  --threads INT               Threads for CheckM2 (default: 1)
+  --database PATH             CheckM2 diamond database
+  --force                     Overwrite existing CheckM2 output
+  --tiers LIST                Tiers to process (default: HQ,MQ,LQ)
+  --checkm2-args STR          Extra arguments passed to checkm2
+```
+
+### run-gunc
+
+Runs GUNC gene-level chimerism/contamination detection, complementing
+`check-chimeras`. Feed the output back with `check-chimeras --gunc-dir`.
+The command runs an env-health check and refuses to launch a GUNC broken by an
+incompatible pandas/numpy/python (GUNC is old — see Installation).
+
+```
+Required (one of):
+  --selected-dir PATH         Directory with HQ/, MQ/, LQ/ subdirectories
+  --genome-dir PATH           Single directory with genome files
+
+Required:
+  -o, --output PATH           Output directory
+
+Optional:
+  --file-suffix STR           Genome file suffix (default: .fa)
+  --threads INT               Threads (default: 1)
+  --db-file PATH              GUNC diamond database (.dmnd); else uses $GUNC_DB
+  --tiers LIST                Tiers to process (default: HQ,MQ,LQ)
+  --gunc-args STR             Extra arguments passed to gunc run
+```
+
 ---
 
 ## Understanding Misassembly Detection
@@ -526,7 +638,7 @@ MaMISA uses soft-clipping information from read mapping to detect misassemblies.
 strong evidence that two unrelated sequences were joined during assembly.
 
 The `classify-clipping` command adds mechanistic insight to each clipping position using
-four BAM-derived signals:
+BAM-derived signals:
 
 | Signal | What it detects |
 |---|---|
@@ -534,6 +646,7 @@ four BAM-derived signals:
 | **discordant_fraction** | Reads whose mates map to a different contig or in wrong orientation |
 | **large_insert_fraction** | Pairs with abnormally large insert sizes (> mean + 3σ) |
 | **clipped_base_entropy** | Repetitive vs. diverse sequence at the break point |
+| **sa_partner_contig** | Clipped reads whose supplementary alignment maps to one other contig → contig join (`chimeric_join`) |
 
 When `check-read-chimeras` output is provided, taxonomy shifts near a clipping position
 provide an additional, strong signal for chimera classification.
@@ -563,4 +676,4 @@ MIT License — see LICENSE for details.
 2. Create a feature branch
 3. Submit a pull request
 
-Issues and feature requests: https://github.com/yourusername/mamisa/issues
+Issues and feature requests: https://github.com/lgallucc/mamisa/issues

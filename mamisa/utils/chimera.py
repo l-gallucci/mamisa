@@ -139,6 +139,40 @@ def parse_gtdbtk_summary(summary_file: Path) -> Dict[str, Dict]:
     return results
 
 
+def parse_gunc_output(gunc_dir: Path) -> Dict[str, Dict]:
+    """
+    Parse GUNC `GUNC.*.maxCSS_level.tsv` output(s) under a directory.
+
+    Returns dict: genome_name → {pass_gunc, css, contamination_portion,
+    n_effective_surplus_clades, taxonomic_level}.
+    """
+    results: Dict[str, Dict] = {}
+    tsvs = sorted(gunc_dir.rglob("GUNC.*.maxCSS_level.tsv"))
+    if not tsvs:
+        tsvs = sorted(gunc_dir.rglob("*maxCSS_level.tsv"))
+    if not tsvs:
+        log_warning(f"No GUNC maxCSS_level.tsv found under {gunc_dir}")
+        return results
+
+    for tsv in tsvs:
+        with open(tsv, newline='') as f:
+            reader = csv.DictReader(f, delimiter='\t')
+            for row in reader:
+                name = (row.get('genome') or row.get('Name') or '').strip()
+                if not name:
+                    continue
+                pass_raw = (row.get('pass.GUNC') or '').strip().lower()
+                results[name] = {
+                    'pass_gunc': pass_raw in ('true', '1', 'yes'),
+                    'css': _safe_float(row.get('clade_separation_score')),
+                    'contamination_portion': _safe_float(row.get('contamination_portion')),
+                    'n_effective_surplus_clades': _safe_float(row.get('n_effective_surplus_clades')),
+                    'taxonomic_level': (row.get('taxonomic_level') or '').strip(),
+                }
+    log_info(f"Parsed GUNC results for {len(results):,} genomes from {len(tsvs)} file(s)")
+    return results
+
+
 def _safe_float(value) -> Optional[float]:
     if value is None:
         return None
@@ -196,6 +230,8 @@ def assess_chimera_risk(
     contamination: Optional[float],
     windowed_gc_delta: Optional[float],
     taxonomy_warning: bool = False,
+    gunc_fail: Optional[bool] = None,
+    gunc_css: Optional[float] = None,
 ) -> Tuple[str, List[str]]:
     """
     Assess chimera risk for a bin/MAG from multiple independent signals.
@@ -209,6 +245,9 @@ def assess_chimera_risk(
         > 10 %        → +3    > 5 %         → +2
       GTDB-Tk placement warning
         any           → +1
+      GUNC gene-level taxonomic inconsistency
+        pass.GUNC = False → +3   (genes span multiple clades)
+        clade_separation_score > 0.45 → +2  (when not already failed)
 
     Risk levels  →  score thresholds
       High   ≥ 5
@@ -252,6 +291,17 @@ def assess_chimera_risk(
     if taxonomy_warning:
         score += 1
         reasons.append("GTDB-Tk placement warning (low confidence or poor MSA)")
+
+    # GUNC gene-level taxonomic consistency (orthogonal to GC/contamination)
+    if gunc_fail is True:
+        score += 3
+        if gunc_css is not None:
+            reasons.append(f"GUNC fail: genes span multiple clades (CSS={gunc_css:.2f})")
+        else:
+            reasons.append("GUNC fail: genes span multiple clades")
+    elif gunc_css is not None and gunc_css > 0.45:
+        score += 2
+        reasons.append(f"Elevated GUNC clade separation score (CSS={gunc_css:.2f})")
 
     if score >= 5:
         return 'High', reasons

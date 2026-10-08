@@ -11,7 +11,9 @@ from pathlib import Path
 from mamisa.commands import filter_misassemblies
 from mamisa.commands import remove_hq_contigs
 from mamisa.commands import filter_checkm2
+from mamisa.commands import run_checkm2
 from mamisa.commands import run_gtdbtk
+from mamisa.commands import run_gunc
 from mamisa.commands import process_large_contigs
 from mamisa.commands import check_chimeras
 from mamisa.commands import check_read_chimeras
@@ -29,10 +31,13 @@ def main():
 Available commands:
   filter-misassemblies    Filter assembly based on misassembly detection
   remove-hq-contigs       Remove high-quality genome contigs from assembly
-  filter-checkm2          Filter genomes based on CheckM2 quality reports
+  organize-mags           Split genomes into HQ/MQ/LQ tiers, optionally rename by sample+taxonomy
+                          (alias: filter-checkm2, deprecated)
+  run-checkm2             Run CheckM2 completeness/contamination prediction
   run-gtdbtk              Run GTDB-Tk taxonomy classification
   process-large-contigs   Extract, QC, and filter large contigs intelligently
-  check-chimeras          Detect chimeric MAGs and circular contigs (GC-based)
+  run-gunc                Run GUNC gene-level chimerism/contamination detection
+  check-chimeras          Detect chimeric MAGs and circular contigs (GC + GUNC)
   check-read-chimeras     Detect chimeric contigs via read-level taxonomy (Kraken2+BAM)
   classify-clipping       Classify each clipping position with BAM evidence
   check-zero-coverage     Validate assembly regions with no read coverage via BLAST
@@ -41,7 +46,7 @@ Examples:
   mamisa filter-misassemblies --help
   mamisa filter-checkm2 --help
   
-For more information, visit: https://github.com/yourusername/mamisa
+For more information, visit: https://github.com/lgallucc/mamisa
         """
     )
     
@@ -54,7 +59,9 @@ For more information, visit: https://github.com/yourusername/mamisa
     filter_misassemblies.register_parser(subparsers)
     remove_hq_contigs.register_parser(subparsers)
     filter_checkm2.register_parser(subparsers)
+    run_checkm2.register_parser(subparsers)
     run_gtdbtk.register_parser(subparsers)
+    run_gunc.register_parser(subparsers)
     process_large_contigs.register_parser(subparsers)
     check_chimeras.register_parser(subparsers)
     check_read_chimeras.register_parser(subparsers)

@@ -1,0 +1,26 @@
+# MaMISA Snakemake workflow — configuration
+#
+# Edit the paths below, then run from the repo root:
+#   snakemake --use-conda --cores 20 -s workflow/Snakefile --configfile workflow/config.yaml
+#
+# --use-conda makes Snakemake build one conda env per rule (envs/*.yaml) on the
+# first run, so the conflicting tools (checkm2 / gtdbtk / gunc) never share an env.
+
+# Input: directory of MAG/genome FASTA files (one genome per file)
+genomes_dir: "bins"
+genome_ext: "fa"            # extension without the dot
+
+# Output root
+outdir: "results"
+
+# Resources
+threads: 20
+
+# Reference databases (required by the matching tool)
+gtdbtk_data: "/path/to/gtdbtk_data"                               # $GTDBTK_DATA_PATH
+gunc_db: "/path/to/gunc_db/gunc_db_progenomes2.1.dmnd"            # GUNC .dmnd
+checkm2_db: ""                                                     # optional; blank = CheckM2 default
+
+# organize-mags renaming
+sample_regex: "^([^._]+)"   # capture group 1 = sample id from the filename
+tax_level: "genus"          # rank used in the renamed output

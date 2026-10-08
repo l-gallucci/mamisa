@@ -139,6 +139,7 @@ class _PosAccumulator:
     """Collects read-level evidence for one clipping position."""
     __slots__ = (
         'clip_pos',
+        'this_contig',
         # primary + secondary (for depth)
         'n_depth',
         # primary only
@@ -150,10 +151,15 @@ class _PosAccumulator:
         'n_reverse',
         # clipped-base entropy (from reads soft-clipping at exactly this position)
         '_clipped_bases',
+        # supplementary-alignment join evidence (Trigodet et al. 2025)
+        '_n_clip_reads',       # primary reads soft-clipping near this position
+        '_n_clip_with_sa',     # of those, how many carry an SA tag to another contig
+        '_sa_targets',         # {other_contig: n_reads whose clip maps there}
     )
 
-    def __init__(self, clip_pos: int):
+    def __init__(self, clip_pos: int, this_contig: str = ''):
         self.clip_pos = clip_pos
+        self.this_contig = this_contig
         self.n_depth = 0
         self.n_primary = 0
         self.n_proper_pair = 0
@@ -162,9 +168,13 @@ class _PosAccumulator:
         self.n_forward = 0
         self.n_reverse = 0
         self._clipped_bases: List[str] = []
+        self._n_clip_reads = 0
+        self._n_clip_with_sa = 0
+        self._sa_targets: Dict[str, int] = defaultdict(int)
 
     def add_read(self, flag: int, tlen: int, seq: str, cigar: str,
-                 read_pos: int, insert_mean: float, insert_std: float):
+                 read_pos: int, insert_mean: float, insert_std: float,
+                 sa_partners: Optional[List[str]] = None):
         is_secondary = bool(flag & 0x100)
         is_primary = not is_secondary          # (supplementary already excluded upstream)
 
@@ -192,14 +202,38 @@ class _PosAccumulator:
         else:
             self.n_forward += 1
 
-        # Collect clipped bases from reads whose soft-clip edge is AT this position.
+        # Soft-clip boundary near this position?
         # CIGAR 'S' at the start → clip ends at read_pos-1 (position before alignment).
         # CIGAR 'S' at the end  → clip starts at read_pos + aligned_length.
-        # We only collect up to 200 clipped bases per position to bound memory.
-        if len(self._clipped_bases) < 200 and seq and cigar and cigar != '*':
+        clipped = ''
+        if seq and cigar and cigar != '*':
             clipped = _extract_clipped_bases(cigar, seq, read_pos, self.clip_pos)
-            if clipped:
+
+        if clipped:
+            self._n_clip_reads += 1
+            # bound memory: keep at most 200 clipped sequences for entropy
+            if len(self._clipped_bases) < 200:
                 self._clipped_bases.append(clipped)
+
+            # Supplementary-alignment join signal: where does the clipped part map?
+            # A clipped read whose supplementary alignment lands on ONE other contig
+            # is evidence that the two contigs are joined at this position.
+            if sa_partners:
+                partners = {rn for rn in sa_partners if rn and rn != self.this_contig}
+                if partners:
+                    self._n_clip_with_sa += 1
+                    for rn in partners:
+                        self._sa_targets[rn] += 1
+
+    def sa_join_stats(self) -> Tuple[str, int, int]:
+        """
+        Dominant supplementary-alignment partner for clipped reads.
+        Returns (partner_contig, support_reads, n_clip_reads).
+        """
+        if not self._sa_targets:
+            return 'N/A', 0, self._n_clip_reads
+        partner, count = max(self._sa_targets.items(), key=lambda kv: kv[1])
+        return partner, count, self._n_clip_reads
 
     def clipped_base_entropy(self) -> float:
         """Shannon entropy (bits) of the base composition of clipped sequences."""
@@ -237,6 +271,9 @@ class _PosAccumulator:
             or (contig_length > 0 and self.clip_pos > contig_length - 500)
         )
 
+        sa_partner, sa_support, n_clip = self.sa_join_stats()
+        sa_frac = (sa_support / n_clip) if n_clip > 0 else float('nan')
+
         return {
             'contig': contig,
             'clip_pos': self.clip_pos,
@@ -251,6 +288,10 @@ class _PosAccumulator:
             'clipped_base_entropy': round(self.clipped_base_entropy(), 3)
                                     if not math.isnan(self.clipped_base_entropy()) else 'N/A',
             'near_contig_end': near_end,
+            'n_clipped_reads': n_clip,
+            'sa_partner_contig': sa_partner,
+            'sa_partner_support': sa_support,
+            'sa_partner_fraction': round(sa_frac, 3) if not math.isnan(sa_frac) else 'N/A',
         }
 
 
@@ -320,7 +361,7 @@ def collect_position_stats(
     accumulators: Dict[Tuple[str, int], _PosAccumulator] = {}
     for contig, records in clipping_data.items():
         for pos, _ in records:
-            accumulators[(contig, pos)] = _PosAccumulator(pos)
+            accumulators[(contig, pos)] = _PosAccumulator(pos, this_contig=contig)
 
     # Stream BAM: exclude supplementary (-F 2048), apply MAPQ filter
     cmd = ['samtools', 'view', '-F', '2048', '-q', str(min_mapq), str(bam_file)]
@@ -354,6 +395,18 @@ def collect_position_stats(
             except ValueError:
                 tlen = 0
 
+            # Supplementary-alignment targets from the SA:Z: optional tag.
+            # Format: SA:Z:rname,pos,strand,CIGAR,mapQ,NM;rname,...  → take each rname.
+            sa_partners: Optional[List[str]] = None
+            for opt in fields[11:]:
+                if opt.startswith('SA:Z:'):
+                    sa_partners = [
+                        entry.split(',', 1)[0]
+                        for entry in opt[5:].rstrip('\n').split(';')
+                        if entry
+                    ]
+                    break
+
             # Find clipping positions within window of this read's start
             positions = pos_index[contig]
             lo = bisect.bisect_left(positions, read_pos - window)
@@ -365,6 +418,7 @@ def collect_position_stats(
                     accumulators[key].add_read(
                         flag, tlen, seq, cigar,
                         read_pos, insert_mean, insert_std,
+                        sa_partners=sa_partners,
                     )
 
             n_reads += 1

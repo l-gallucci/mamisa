@@ -1,0 +1,19 @@
+# GUNC is OLD: its recipe declares pandas>=2.0.0 with NO upper bound, so an
+# unpinned install pulls pandas 3.x + a bleeding-edge Python that break it.
+# These pins resolve to python 3.10 / pandas 2.3 / numpy 1.26 / diamond 2.1.24
+# / prodigal 2.6.3 and run cleanly (verified 2026-10).
+name: mamisa-gunc
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - gunc=1.1.1
+  - python=3.10
+  - pandas>=2,<3
+  - numpy<2
+  - diamond
+  - prodigal
+  - pip
+  - pip:
+      # Until published to PyPI, replace `mamisa` with: -e /absolute/path/to/mamisa
+      - mamisa
