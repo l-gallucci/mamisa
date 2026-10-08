@@ -63,6 +63,37 @@ mamisa --version
 mamisa --help
 ```
 
+That is enough to run the **dependency-free commands** (`organize-mags`,
+`check-chimeras` without GUNC, and the helpers). The heavy commands additionally
+call external tools — read on.
+
+### How the environments fit together (read this first)
+
+The key fact: **MaMISA is tiny and has no dependencies**, but the tools it drives
+(CheckM2, GTDB-Tk, GUNC, anvi'o) pin **conflicting** versions and **cannot live in
+one conda env**. So the layout is:
+
+- **one conda env per heavy tool** (unavoidable, standard in metagenomics), and
+- **MaMISA installed into each env you run from** — a 1-second `pip install`, since
+  it has no dependencies. The wrapper `mamisa run-gunc` must run *inside* the env
+  that has `gunc`, so `mamisa` has to be importable there too.
+
+| Conda env | Contains | MaMISA commands that run in it |
+|---|---|---|
+| `mamisa` (light) | MaMISA + samtools, BLAST+, bedtools, Kraken2, Meryl | `organize-mags`, `check-chimeras`, `classify-clipping`, `check-read-chimeras`, `check-zero-coverage`, `process-large-contigs`, and the `setup-workflow` / `fetch-databases` / `check-envs` helpers |
+| `checkm2` | CheckM2 (+ MaMISA) | `run-checkm2` |
+| `gtdbtk` | GTDB-Tk (+ MaMISA) | `run-gtdbtk` |
+| `gunc` | GUNC + DIAMOND + Prodigal (+ MaMISA) | `run-gunc` |
+| `anvio-9` | anvi'o (upstream, no MaMISA needed) | produces the `*-clipping.txt` inputs |
+
+**Do I need all of them?** Only the ones whose commands you use. Just want
+`organize-mags` / `check-chimeras`? The `mamisa` env alone is enough. Want the full
+assembly→taxonomy pipeline? Create all of them.
+
+**Snakemake is optional** — it is only an orchestrator *on top* of these envs
+(see [Run the pipeline](#run-the-pipeline)). You never put MaMISA "in a Snakemake
+env"; Snakemake just calls the envs above.
+
 ### Running the tests
 
 ```bash
@@ -93,42 +124,40 @@ to be on `PATH` for the command that uses it.
 | `filter-misassemblies` | anvi'o (upstream misassembly detection) |
 | `organize-mags` (was `filter-checkm2`) | (none; consumes CheckM2 + GTDB-Tk output) |
 
-### Why not one single environment?
+### Create the environments
 
-Everything in **one conda env is not feasible**: CheckM2, GTDB-Tk, GUNC and
-anvi'o each pin conflicting versions of Python / pandas / numpy / DIAMOND and
-will not co-solve. This is normal in metagenomics — the heavy annotators each
-get their own env. The light CLI tools, however, share one env happily.
-
-**Recommended layout:** one `mamisa` env with MaMISA + the light tools, plus one
-env per heavy annotator. MaMISA is dependency-free, so if you prefer you can also
-`pip install -e .` into each annotator env and skip env-switching.
+Create only the ones you need (see the table above). `mamba` or `conda` both work.
 
 ```bash
-# ── 1. Main env: MaMISA + light CLI tools (samtools, BLAST+, bedtools, Kraken2, Meryl)
+# 1) Light env: MaMISA + the small CLI tools. Needed for most commands.
 mamba create -n mamisa -c conda-forge -c bioconda \
     python=3.10 samtools blast bedtools kraken2 meryl
 conda activate mamisa
-pip install -e .
+pip install -e .                     # installs MaMISA (clone this repo first)
 
-# ── 2. CheckM2  (run-checkm2, process-large-contigs, organize-mags upstream)
+# 2) CheckM2
 mamba create -n checkm2 -c conda-forge -c bioconda checkm2
-# checkm2 database: `checkm2 database --download`
+conda run -n checkm2 pip install -e .    # add MaMISA (zero-dep, instant)
 
-# ── 3. GTDB-Tk  (run-gtdbtk)
+# 3) GTDB-Tk
 mamba create -n gtdbtk -c conda-forge -c bioconda gtdbtk
-export GTDBTK_DATA_PATH=/path/to/gtdbtk_data
+conda run -n gtdbtk pip install -e .
 
-# ── 4. GUNC  (run-gunc)  ── GUNC is OLD: pin versions or its recipe pulls
-#     pandas 3.x + a bleeding-edge Python that break it at runtime.
+# 4) GUNC — OLD tool: PIN the versions or its recipe pulls pandas 3.x +
+#    a too-new Python that crash it at runtime.
 mamba create -n gunc -c conda-forge -c bioconda \
     "gunc=1.1.1" "python=3.10" "pandas>=2,<3" "numpy<2" diamond prodigal
-# GUNC database (~13 GB):
-#   conda activate gunc && gunc download_db ./gunc_db/
-#   export GUNC_DB=./gunc_db/gunc_db_progenomes2.1.dmnd
+conda run -n gunc pip install -e .
 
-# ── 5. anvi'o  (upstream: anvi-script-find-misassemblies → *-clipping.txt)
+# 5) anvi'o — upstream only, produces *-clipping.txt (no MaMISA needed)
 mamba create -n anvio-9 -c conda-forge -c bioconda anvio=9
+```
+
+Check everything is compatible at any time:
+
+```bash
+mamisa check-envs --mamisa-env mamisa --checkm2-env checkm2 \
+                  --gtdbtk-env gtdbtk --gunc-env gunc
 ```
 
 > **Verified (2026-10):** GUNC 1.1.1's Bioconda recipe declares `pandas>=2.0.0`
@@ -137,57 +166,93 @@ mamba create -n anvio-9 -c conda-forge -c bioconda anvio=9
 > numpy 1.26, diamond 2.1.24, prodigal 2.6.3 and runs cleanly. `mamisa run-gunc`
 > also runs an env-health check and refuses to launch a broken GUNC.
 
-To run a wrapper whose tool lives in another env without switching shells:
+### Databases
+
+The path KIND is checked per tool: **GTDB-Tk = a directory**, **GUNC and CheckM2 =
+a `.dmnd` file**.
 
 ```bash
-conda run -n gunc mamisa run-gunc --genome-dir bins/ --output gunc_out/ \
-    --file-suffix .fa --threads 20   # if mamisa is installed in that env
-# or activate the tool env, which also puts `mamisa` on PATH if installed there
-```
-
-### Fastest path — let MaMISA configure the workflow
-
-Helper commands remove the manual editing. From the repo (after `pip install -e .`):
-
-```bash
-# A. I DON'T have envs yet — let Snakemake build one per rule
-mamisa setup-workflow --genomes-dir bins/ --genome-ext fa --threads 40 --install
-
-# B. I ALREADY have conda envs — point MaMISA at them; it sanity-checks each
-mamisa setup-workflow --genomes-dir bins/ --threads 40 \
-    --mamisa-env mamisa --checkm2-env checkm2 --gtdbtk-env gtdbtk --gunc-env gunc
-#   -> records the env names, sets use_named_envs, and reports each tool's
-#      version + whether it is compatible (and what to install if not).
-#      Re-check any time with:  mamisa check-envs --gunc-env gunc ...
-```
-
-Databases — the path KIND is checked per tool (GTDB-Tk = **directory**, GUNC and
-CheckM2 = **.dmnd file**):
-
-```bash
-# already have them? register their locations (validated, written to config)
+# already have them? just point MaMISA at them (validated, written to config)
 mamisa fetch-databases \
-    --gtdbtk-data /data/gtdbtk_r220 \                  # a DIRECTORY
-    --gunc-db     /data/gunc/gunc_db_progenomes2.1.dmnd \  # a FILE
-    --checkm2-db  /data/checkm2/uniref100.KO.1.dmnd        # a FILE
+    --gtdbtk-data /data/gtdbtk_r220 \                      # DIRECTORY
+    --gunc-db     /data/gunc/gunc_db_progenomes2.1.dmnd \  # FILE
+    --checkm2-db  /data/checkm2/uniref100.KO.1.dmnd        # FILE
 
-# or download the missing ones (runs each tool's own downloader in its env)
+# or download the missing ones (each runs inside its tool's env)
 mamisa fetch-databases --download --db-dir /data/mamisa_dbs
 ```
 
-Then run:
+### Run the pipeline
+
+Two equivalent ways. Both use the same envs created above.
+
+**Option A — run commands yourself (simplest).** Call each command in its env:
 
 ```bash
-# mode A (Snakemake-built envs)
-snakemake --use-conda --cores 40 -s workflow/Snakefile --configfile workflow/config.yaml
-# mode B (your named envs) — NO --use-conda; each rule is wrapped in conda run -n
+conda run -n checkm2 mamisa run-checkm2 --genome-dir bins/ -o results/checkm2 --threads 40
+conda run -n gtdbtk  env GTDBTK_DATA_PATH=/data/gtdbtk_r220 \
+                     mamisa run-gtdbtk  --genome-dir bins/ -o results/gtdbtk --cpus 40
+conda run -n gunc    mamisa run-gunc    --genome-dir bins/ -o results/gunc \
+                     --file-suffix .fa --threads 40 --db-file /data/gunc/gunc_db_progenomes2.1.dmnd
+conda run -n mamisa  mamisa organize-mags --checkm2-root results/checkm2 --genomes-dir bins/ \
+                     --gtdbtk-dir results/gtdbtk -o results/filtered --rename --copy
+conda run -n mamisa  mamisa check-chimeras --bins-dir bins/ --gunc-dir results/gunc \
+                     --checkm2-report results/checkm2/quality_report.tsv -o results/chimera_report.tsv
+```
+
+**Option B — Snakemake orchestrates it.** One command runs the whole DAG. First
+configure once:
+
+```bash
+conda install -c conda-forge -c bioconda snakemake-minimal   # in base or its own env
+
+# tell the workflow which envs + databases to use (sanity-checks them)
+mamisa setup-workflow --genomes-dir bins/ --genome-ext fa --threads 40 \
+    --mamisa-env mamisa --checkm2-env checkm2 --gtdbtk-env gtdbtk --gunc-env gunc
+
+# then run (named-env mode: Snakemake wraps each rule in `conda run -n`)
 snakemake --cores 40 -s workflow/Snakefile --configfile workflow/config.yaml
 ```
 
-`setup-workflow` edits `workflow/envs/*.yaml` (pip → `-e <repo>`) and the paths in
-`workflow/config.yaml`, validates database kinds, and sanity-checks supplied envs;
-`fetch-databases` validates or downloads each database; `check-envs` reports tool
-versions and compatibility. All support `--dry-run`.
+Don't have the envs and want Snakemake to **build them for you** instead? Use
+`mamisa setup-workflow --genomes-dir bins/ --install` and run with
+`snakemake --use-conda ...`. Details in [`workflow/README.md`](workflow/README.md).
+
+### Running on an HPC cluster (SLURM)
+
+Create the conda envs once on a shared filesystem (they are reused by every job).
+Two ways to submit:
+
+**1. One Snakemake run that submits each rule as its own SLURM job** (recommended —
+each tool gets its own CPUs/RAM/time):
+
+```bash
+pip install snakemake-executor-plugin-slurm
+snakemake -s workflow/Snakefile --configfile workflow/config.yaml \
+    --executor slurm --jobs 20 \
+    --default-resources slurm_partition=standard runtime=1440 \
+    --set-resources run_gtdbtk:mem_mb=320000 run_gunc:mem_mb=64000 \
+                    run_checkm2:mem_mb=64000
+```
+
+**2. A single `sbatch` script** that runs Option A's `conda run` commands in order
+(fine for one sample / modest data):
+
+```bash
+#!/bin/bash
+#SBATCH -J mamisa -c 40 --mem=320G -t 24:00:00
+source ~/miniconda3/etc/profile.d/conda.sh
+conda run -n checkm2 mamisa run-checkm2 --genome-dir bins/ -o results/checkm2 --threads 40
+conda run -n gtdbtk  env GTDBTK_DATA_PATH=$GTDBTK_DATA_PATH mamisa run-gtdbtk --genome-dir bins/ -o results/gtdbtk --cpus 40
+conda run -n gunc    mamisa run-gunc    --genome-dir bins/ -o results/gunc --file-suffix .fa --threads 40 --db-file $GUNC_DB
+# ... organize-mags, check-chimeras in the mamisa env
+```
+
+Notes: **GTDB-Tk needs a lot of RAM** (pplacer: ~150–320 GB depending on release);
+GUNC and CheckM2 are lighter (~16–64 GB). If your cluster provides the tools as
+`module load` instead of conda, drop the `conda run -n <env>` prefix and `module
+load <tool>` before each step (Option A / sbatch); Snakemake named-env mode assumes
+conda, so prefer the sbatch form with modules.
 
 ---
 
