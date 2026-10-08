@@ -11,7 +11,7 @@ import argparse
 from pathlib import Path
 from typing import Optional
 
-from ..utils.validation import validate_dir_exists, check_dependencies
+from ..utils.validation import validate_dir_exists, check_dependencies, check_db_path
 from ..utils.logging import log_info, log_error, log_warning, print_header, print_section
 
 
@@ -202,9 +202,12 @@ def run(args):
     extra_args = shlex.split(args.checkm2_args) if args.checkm2_args else []
 
     if args.database:
-        if not args.database.exists():
-            log_error(f"CheckM2 database not found: {args.database}")
+        ok, msg = check_db_path(args.database, 'checkm2')
+        if not ok:
+            log_error(msg)
             sys.exit(1)
+        if msg:
+            log_warning(msg)
         log_info(f"Using database: {args.database}")
 
     print_section("Processing Genomes")

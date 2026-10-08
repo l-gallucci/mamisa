@@ -19,6 +19,9 @@ from mamisa.commands import check_chimeras
 from mamisa.commands import check_read_chimeras
 from mamisa.commands import classify_clipping
 from mamisa.commands import check_zero_coverage
+from mamisa.commands import setup_workflow
+from mamisa.commands import fetch_databases
+from mamisa.commands import check_envs
 from mamisa import __version__
 
 
@@ -41,6 +44,9 @@ Available commands:
   check-read-chimeras     Detect chimeric contigs via read-level taxonomy (Kraken2+BAM)
   classify-clipping       Classify each clipping position with BAM evidence
   check-zero-coverage     Validate assembly regions with no read coverage via BLAST
+  setup-workflow          Configure the Snakemake workflow (env yamls + config)
+  fetch-databases         Download reference DBs, or register existing ones
+  check-envs              Sanity-check existing conda envs (versions + compatibility)
 
 Examples:
   mamisa filter-misassemblies --help
@@ -67,6 +73,9 @@ For more information, visit: https://github.com/lgallucc/mamisa
     check_read_chimeras.register_parser(subparsers)
     classify_clipping.register_parser(subparsers)
     check_zero_coverage.register_parser(subparsers)
+    setup_workflow.register_parser(subparsers)
+    fetch_databases.register_parser(subparsers)
+    check_envs.register_parser(subparsers)
     
     # Parse arguments
     args = parser.parse_args()

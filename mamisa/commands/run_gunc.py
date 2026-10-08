@@ -32,7 +32,7 @@ import argparse
 from pathlib import Path
 from typing import Optional
 
-from ..utils.validation import validate_dir_exists, check_dependencies
+from ..utils.validation import validate_dir_exists, check_dependencies, check_db_path
 from ..utils.logging import log_info, log_error, log_warning, print_header, print_section
 
 
@@ -216,10 +216,13 @@ def run(args):
     if db_file is None:
         log_warning("No --db-file and GUNC_DB not set; GUNC will error unless its "
                     "default DB location is configured.")
-    elif not db_file.exists():
-        log_error(f"GUNC database not found: {db_file}")
-        sys.exit(1)
     else:
+        ok, msg = check_db_path(db_file, 'gunc')
+        if not ok:
+            log_error(msg)
+            sys.exit(1)
+        if msg:
+            log_warning(msg)
         log_info(f"Using GUNC database: {db_file}")
 
     extra_args = shlex.split(args.gunc_args) if args.gunc_args else []

@@ -23,6 +23,22 @@ EXT     = config["genome_ext"]
 OUT     = config["outdir"]
 THREADS = config["threads"]
 
+# Env mode: either Snakemake-built envs (--use-conda, envs/*.yaml) or the user's
+# own named envs wrapped with `conda run -n` (use_named_envs: true).
+USE_NAMED = bool(config.get("use_named_envs", False))
+ENVS = {
+    "mamisa":  config.get("env_mamisa", ""),
+    "checkm2": config.get("env_checkm2", ""),
+    "gtdbtk":  config.get("env_gtdbtk", ""),
+    "gunc":    config.get("env_gunc", ""),
+}
+
+
+def pre(role):
+    """Command prefix: `conda run -n <env> ` in named-env mode, else empty."""
+    name = ENVS.get(role, "")
+    return f"conda run -n {name} " if (USE_NAMED and name) else ""
+
 
 rule all:
     input:
@@ -36,13 +52,14 @@ rule run_checkm2:
     output:
         report=f"{OUT}/checkm2/quality_report.tsv",
     params:
+        pre=pre("checkm2"),
         outdir=f"{OUT}/checkm2",
         db=("--database " + config["checkm2_db"]) if config.get("checkm2_db") else "",
     threads: THREADS
     conda:
         "envs/checkm2.yaml"
     shell:
-        "mamisa run-checkm2 --genome-dir {input.genomes} --output {params.outdir} "
+        "{params.pre}mamisa run-checkm2 --genome-dir {input.genomes} --output {params.outdir} "
         "--extension {EXT} --threads {threads} --force {params.db}"
 
 
@@ -52,12 +69,14 @@ rule run_gtdbtk:
     output:
         # GTDB-Tk writes bac120/ar53 summaries whose exact set varies; mark the dir
         outdir=directory(f"{OUT}/gtdbtk"),
+    params:
+        pre=pre("gtdbtk"),
     threads: THREADS
     conda:
         "envs/gtdbtk.yaml"
     shell:
         "GTDBTK_DATA_PATH={config[gtdbtk_data]} "
-        "mamisa run-gtdbtk --genome-dir {input.genomes} --output {output.outdir} "
+        "{params.pre}mamisa run-gtdbtk --genome-dir {input.genomes} --output {output.outdir} "
         "--extension {EXT} --cpus {threads}"
 
 
@@ -66,11 +85,13 @@ rule run_gunc:
         genomes=GENOMES,
     output:
         outdir=directory(f"{OUT}/gunc"),
+    params:
+        pre=pre("gunc"),
     threads: THREADS
     conda:
         "envs/gunc.yaml"
     shell:
-        "mamisa run-gunc --genome-dir {input.genomes} --output {output.outdir} "
+        "{params.pre}mamisa run-gunc --genome-dir {input.genomes} --output {output.outdir} "
         "--file-suffix .{EXT} --threads {threads} --db-file {config[gunc_db]}"
 
 
@@ -81,12 +102,13 @@ rule organize_mags:
     output:
         merged=f"{OUT}/organized/merged_quality.tsv",
     params:
+        pre=pre("mamisa"),
         outdir=f"{OUT}/organized",
         checkm2_root=f"{OUT}/checkm2",
     conda:
         "envs/mamisa.yaml"
     shell:
-        "mamisa organize-mags --checkm2-root {params.checkm2_root} "
+        "{params.pre}mamisa organize-mags --checkm2-root {params.checkm2_root} "
         "--genomes-dir {GENOMES} --gtdbtk-dir {input.gtdbtk} "
         "--output {params.outdir} --rename --copy "
         "--sample-regex '{config[sample_regex]}' --tax-level {config[tax_level]} "
@@ -100,9 +122,11 @@ rule check_chimeras:
         gunc=f"{OUT}/gunc",
     output:
         report=f"{OUT}/chimera_report.tsv",
+    params:
+        pre=pre("mamisa"),
     conda:
         "envs/mamisa.yaml"
     shell:
-        "mamisa check-chimeras --bins-dir {GENOMES} --output {output.report} "
+        "{params.pre}mamisa check-chimeras --bins-dir {GENOMES} --output {output.report} "
         "--gtdbtk-dir {input.gtdbtk} --checkm2-report {input.checkm2} "
         "--gunc-dir {input.gunc} --extensions {EXT}"
