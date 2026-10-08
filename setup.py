@@ -26,14 +26,14 @@ setup(
     description="MaMISA - Manage Misassemblies: Toolkit for metagenomic assembly quality control",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    author="Your Name",
-    author_email="your.email@example.com",
-    url="https://github.com/yourusername/mamisa",
+    author="Luigi Gallucci",
+    author_email="luigigallucci8@gmail.com",
+    url="https://github.com/lgallucc/mamisa",
     license="MIT",
-    
+
     packages=find_packages(),
-    
-    python_requires=">=3.7",
+
+    python_requires=">=3.9",
     
     install_requires=[
         # No external dependencies required for core functionality
@@ -60,17 +60,16 @@ setup(
         "Topic :: Scientific/Engineering :: Bio-Informatics",
         "License :: OSI Approved :: MIT License",
         "Programming Language :: Python :: 3",
-        "Programming Language :: Python :: 3.7",
-        "Programming Language :: Python :: 3.8",
         "Programming Language :: Python :: 3.9",
         "Programming Language :: Python :: 3.10",
         "Programming Language :: Python :: 3.11",
+        "Programming Language :: Python :: 3.12",
     ],
-    
+
     keywords="bioinformatics metagenomics assembly quality-control",
-    
+
     project_urls={
-        "Bug Reports": "https://github.com/yourusername/mamisa/issues",
-        "Source": "https://github.com/yourusername/mamisa",
+        "Bug Reports": "https://github.com/lgallucc/mamisa/issues",
+        "Source": "https://github.com/lgallucc/mamisa",
     },
 )

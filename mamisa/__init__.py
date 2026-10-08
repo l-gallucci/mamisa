@@ -4,7 +4,7 @@ A toolkit for metagenomic assembly quality control and filtering
 """
 
 __version__ = "1.0.0"
-__author__ = "Your Name"
+__author__ = "Luigi Gallucci"
 __license__ = "MIT"
 
 from pathlib import Path
