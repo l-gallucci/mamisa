@@ -3,12 +3,15 @@ CheckM2 result parsing utilities
 """
 
 import csv
-import sys
 from pathlib import Path
 from collections import defaultdict
 from typing import Dict, List, Tuple
 
-from .logging import log_info, log_warning, log_error
+from .logging import log_info, log_warning
+
+
+class NoReportsFoundError(Exception):
+    """Raised when no CheckM2 quality_report.tsv files are found under a root."""
 
 
 def parse_quality_value(value: str) -> float:
@@ -87,8 +90,8 @@ def parse_all_reports(root_dir: Path, thresholds: Dict) -> Tuple[List[Dict], Dic
     reports = find_quality_reports(root_dir)
 
     if not reports:
-        log_error(f"No quality_report.tsv files found in {root_dir}")
-        sys.exit(1)
+        raise NoReportsFoundError(
+            f"No quality_report.tsv files found in {root_dir}")
 
     log_info(f"Found {len(reports):,} CheckM2 report(s)")
 

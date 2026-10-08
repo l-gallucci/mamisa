@@ -24,17 +24,35 @@ def open_file(filepath: Path, mode: str = 'r'):
 
 def extract_contig_id(text: str) -> str:
     """
-    Extract a numeric contig identifier from various naming conventions:
-      - contig_123              → '123'
-      - stdin.part_contig_7420  → '7420'
-      - NODE_456_length_...     → '456'
-      - scaffold_789            → '789'
+    Extract a numeric contig identifier from common assembler naming schemes.
 
-    Returns the first integer found in the string, or the stripped original
-    text if no integer is present.
+    Convention-aware so the k-mer size in MEGAHIT names is not mistaken for the
+    contig id:
+      - k141_456                → '456'   (MEGAHIT: id after k<kmer>_)
+      - NODE_1_length_5000_cov… → '1'     (SPAdes: id after NODE_)
+      - scaffold_789 / contig_123 / stdin.part_contig_7420 → trailing integer
+
+    Falls back to the first integer anywhere in the string, then to the
+    stripped original text when no integer is present.
     """
-    match = re.search(r'(\d+)', text)
-    return match.group(1) if match else text.strip()
+    # MEGAHIT: k<kmer>_<id>  -> take the id, never the k-mer size
+    m = re.match(r'k\d+_(\d+)', text)
+    if m:
+        return m.group(1)
+
+    # SPAdes: NODE_<id>_length_...
+    m = re.search(r'NODE_(\d+)', text)
+    if m:
+        return m.group(1)
+
+    # generic *_<id> at the end (contig_123, scaffold_789, part_contig_7420)
+    m = re.search(r'(\d+)\s*$', text)
+    if m:
+        return m.group(1)
+
+    # last resort: first integer anywhere
+    m = re.search(r'(\d+)', text)
+    return m.group(1) if m else text.strip()
 
 
 def read_fasta_streaming(fasta_path: Path) -> Iterator[Tuple[str, str]]:
