@@ -28,7 +28,7 @@ setup(
     long_description_content_type="text/markdown",
     author="Luigi Gallucci",
     author_email="luigigallucci8@gmail.com",
-    url="https://github.com/lgallucc/mamisa",
+    url="https://github.com/l-gallucci/mamisa",
     license="MIT",
 
     packages=find_packages(),
@@ -69,7 +69,7 @@ setup(
     keywords="bioinformatics metagenomics assembly quality-control",
 
     project_urls={
-        "Bug Reports": "https://github.com/lgallucc/mamisa/issues",
-        "Source": "https://github.com/lgallucc/mamisa",
+        "Bug Reports": "https://github.com/l-gallucci/mamisa/issues",
+        "Source": "https://github.com/l-gallucci/mamisa",
     },
 )

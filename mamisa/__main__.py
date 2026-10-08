@@ -52,7 +52,7 @@ Examples:
   mamisa filter-misassemblies --help
   mamisa filter-checkm2 --help
   
-For more information, visit: https://github.com/lgallucc/mamisa
+For more information, visit: https://github.com/l-gallucci/mamisa
         """
     )
     

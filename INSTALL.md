@@ -4,7 +4,7 @@
 
 ```bash
 # Clone repository
-git clone https://github.com/lgallucc/mamisa.git
+git clone https://github.com/l-gallucci/mamisa.git
 cd mamisa
 
 # Install in development mode
@@ -83,7 +83,7 @@ If you want to contribute to MaMISA:
 
 ```bash
 # Clone repository
-git clone https://github.com/lgallucc/mamisa.git
+git clone https://github.com/l-gallucci/mamisa.git
 cd mamisa
 
 # Create virtual environment

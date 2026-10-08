@@ -54,7 +54,7 @@ MaMISA itself is **pure Python with no external dependencies** (Python ≥ 3.9),
 it installs anywhere in seconds:
 
 ```bash
-git clone https://github.com/lgallucc/mamisa.git
+git clone https://github.com/l-gallucci/mamisa.git
 cd mamisa
 pip install -e .
 
@@ -883,4 +883,4 @@ MIT License — see LICENSE for details.
 2. Create a feature branch
 3. Submit a pull request
 
-Issues and feature requests: https://github.com/lgallucc/mamisa/issues
+Issues and feature requests: https://github.com/l-gallucci/mamisa/issues
