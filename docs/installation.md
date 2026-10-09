@@ -124,6 +124,11 @@ mamisa fetch-databases \
 
 # or download the missing ones (each runs inside its tool's env)
 mamisa fetch-databases --download --db-dir /data/mamisa_dbs
+
+# GUNC ships two reference DBs. Default is proGenomes 2.1 (isolate-biased).
+# For environmental MAGs prefer the GTDB DB (broader taxa, fewer false
+# chimeric calls on novel lineages, and consistent with GTDB-Tk downstream):
+mamisa fetch-databases --download --tools gunc --gunc-db-source gtdb
 ```
 
 ## Running the tests

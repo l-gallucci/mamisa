@@ -317,6 +317,8 @@ Optional:
   --download                  Download any DB not supplied as an existing path
   --gtdbtk-data DIR           Existing GTDB-Tk data DIRECTORY
   --gunc-db FILE              Existing GUNC .dmnd FILE
+  --gunc-db-source {progenomes,gtdb}  Which GUNC DB to download (default:
+                              progenomes; use gtdb for environmental MAGs)
   --checkm2-db FILE           Existing CheckM2 .dmnd FILE
   --gtdbtk-env / --gunc-env / --checkm2-env NAME   Env to run each downloader in
   --dry-run

@@ -72,6 +72,11 @@ Downloads run inside the tool's conda env (override names with --*-env).
                         help='Existing GTDB-Tk data DIRECTORY (GTDBTK_DATA_PATH)')
     parser.add_argument('--gunc-db', type=Path,
                         help='Existing GUNC database FILE (.dmnd)')
+    parser.add_argument('--gunc-db-source', choices=['progenomes', 'gtdb'],
+                        default='progenomes',
+                        help='Which GUNC reference DB to download (default: '
+                             'progenomes). Use gtdb for environmental MAGs: '
+                             'broader taxa, fewer false chimeric calls on novelty')
     parser.add_argument('--checkm2-db', type=Path,
                         help='Existing CheckM2 database FILE (.dmnd)')
 
@@ -144,19 +149,24 @@ def handle_gunc(args, config_file):
     if not args.download:
         log_info("  No path given and --download not set; skipped")
         return True
+    source = getattr(args, 'gunc_db_source', 'progenomes')
     target = (args.db_dir / 'gunc').resolve()
-    log_info(f"  Downloading GUNC DB into {target} (~13 GB)")
+    log_info(f"  Downloading GUNC DB ({source}) into {target} (~13-16 GB)")
+    dl_cmd = ['gunc', 'download_db', '-db', source, str(target)]
     if args.dry_run:
-        log_info(f"  Would run: conda run -n {args.gunc_env} gunc download_db {target}")
+        log_info(f"  Would run: conda run -n {args.gunc_env} {' '.join(dl_cmd)}")
         return True
     target.mkdir(parents=True, exist_ok=True)
-    rc = conda_run(args.gunc_env, ['gunc', 'download_db', str(target)])
+    rc = conda_run(args.gunc_env, dl_cmd)
     if rc != 0:
         log_error("  GUNC download failed.")
         return False
+    # Prefer the .dmnd matching the requested source if several are present
     dmnds = sorted(target.glob('*.dmnd'))
     if dmnds:
-        _write_config(config_file, 'gunc_db', dmnds[0].resolve(), args.dry_run)
+        tag = 'gtdb' if source == 'gtdb' else 'progenomes'
+        chosen = next((d for d in dmnds if tag in d.name.lower()), dmnds[0])
+        _write_config(config_file, 'gunc_db', chosen.resolve(), args.dry_run)
     else:
         log_warning(f"  No .dmnd found under {target}; set gunc_db manually")
     return True
