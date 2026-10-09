@@ -80,13 +80,15 @@ rule run_gtdbtk:
         outdir=directory(f"{OUT}/gtdbtk"),
     params:
         pre=pre("gtdbtk"),
+        # reuse an existing gtdbtk.*.summary.tsv instead of re-classifying
+        skip=("--skip-existing" if config.get("gtdbtk_skip_existing", True) else ""),
     threads: THREADS
     conda:
         "envs/gtdbtk.yaml"
     shell:
         "GTDBTK_DATA_PATH={config[gtdbtk_data]} "
         "{params.pre}mamisa run-gtdbtk --genome-dir {input.genomes} --output {output.outdir} "
-        "--extension {EXT} --cpus {threads}"
+        "--extension {EXT} --cpus {threads} {params.skip}"
 
 
 rule run_gunc:
