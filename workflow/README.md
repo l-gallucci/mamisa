@@ -1,8 +1,9 @@
 # MaMISA Snakemake workflow
 
 Runs the MAG quality-control tail of MaMISA with **one conda env per rule**, so
-CheckM2, GTDB-Tk and GUNC (which pin conflicting dependencies) never share an
-env. Snakemake builds each env automatically on first run.
+CheckM2, GTDB-Tk, GUNC and the rRNA/tRNA tools (which pin conflicting
+dependencies) never share an env. Snakemake builds each env automatically on
+first run.
 
 ## Install Snakemake
 
@@ -51,13 +52,16 @@ snakemake -n -s workflow/Snakefile --configfile workflow/config.yaml
 ## DAG
 
 ```
-genomes_dir ─┬─> run-checkm2 ─┐
-             ├─> run-gtdbtk ──┼─> organize-mags (HQ/MQ/LQ + rename)
-             └─> run-gunc ────┘
+genomes_dir ─┬─> run-checkm2 ───┐
+             ├─> run-gtdbtk ────┤
+             ├─> run-mimag-rna ─┼─> organize-mags (HQ/MQ/LQ + rename + MIMAG rRNA/tRNA gate)
+             └─> run-gunc ──────┘
                       └──────────> check-chimeras (GC + contamination + GUNC)
 ```
 
-Binning and anvi'o misassembly detection are assumed done upstream; this
+`run-mimag-rna` (barrnap + tRNAscan-SE) is optional: set `mimag_rna: false` in
+`config.yaml` to skip it, and HQ is then based on completeness/contamination
+only. Binning and anvi'o misassembly detection are assumed done upstream; this
 workflow starts from a directory of MAG FASTAs.
 
 ## Outputs (under `results/`)
@@ -67,6 +71,7 @@ workflow starts from a directory of MAG FASTAs.
 | `checkm2/quality_report.tsv` | run-checkm2 |
 | `gtdbtk/` | run-gtdbtk |
 | `gunc/` | run-gunc |
+| `mimag_rna/mimag_rna_summary.tsv` | run-mimag-rna (if `mimag_rna: true`) |
 | `organized/Selected/{HQ,MQ,LQ}/` | organize-mags (renamed genomes) |
 | `organized/merged_quality.tsv` | organize-mags |
 | `chimera_report.tsv` | check-chimeras |

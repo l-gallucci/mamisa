@@ -33,23 +33,24 @@ def get_gtdbtk_version() -> Optional[str]:
     """Get GTDB-Tk version"""
     try:
         result = subprocess.run(['gtdbtk', '--version'],
-                                capture_output=True, text=True, check=True)
-        return result.stdout.strip()
+                                capture_output=True, text=True,
+                                stdin=subprocess.DEVNULL, timeout=120)
+        return (result.stdout or result.stderr).strip() or None
     except Exception:
         return None
 
 
-def run_gtdbtk_classify(genome_dir: Path, output_dir: Path, 
+def run_gtdbtk_classify(genome_dir: Path, output_dir: Path,
                        extension: str, cpus: int,
-                       mash_db: Optional[Path] = None,
+                       place_species: bool = False,
                        extra_args: list = None) -> int:
     """
     Run GTDB-Tk classify_wf
-    
+
     Returns:
         Exit code from gtdbtk
     """
-    
+
     cmd = [
         'gtdbtk',
         'classify_wf',
@@ -58,10 +59,12 @@ def run_gtdbtk_classify(genome_dir: Path, output_dir: Path,
         '--cpus', str(cpus),
         '--extension', extension
     ]
-    
-    if mash_db:
-        cmd.extend(['--mash_db', str(mash_db)])
-    
+
+    # --place_species: force pplacer tree placement even when skani classifies.
+    # (Replaces the deprecated --skip_ani_screen; GTDB-Tk >=2.7.)
+    if place_species:
+        cmd.append('--place_species')
+
     if extra_args:
         cmd.extend(extra_args)
     
@@ -69,7 +72,7 @@ def run_gtdbtk_classify(genome_dir: Path, output_dir: Path,
     log_info(f"  {' '.join(cmd)}")
     
     try:
-        result = subprocess.run(cmd, check=True)
+        result = subprocess.run(cmd, check=True, stdin=subprocess.DEVNULL)
         return result.returncode
     except subprocess.CalledProcessError as e:
         log_error(f"GTDB-Tk failed with exit code {e.returncode}")
@@ -80,8 +83,8 @@ def run_gtdbtk_classify(genome_dir: Path, output_dir: Path,
 
 
 def process_tier_directory(base_dir: Path, tier: str, output_base: Path,
-                          extension: str, cpus: int, 
-                          mash_db: Optional[Path] = None,
+                          extension: str, cpus: int,
+                          place_species: bool = False,
                           extra_args: list = None) -> dict:
     """
     Process a single tier directory
@@ -114,7 +117,7 @@ def process_tier_directory(base_dir: Path, tier: str, output_base: Path,
         output_dir=tier_output_dir,
         extension=extension,
         cpus=cpus,
-        mash_db=mash_db,
+        place_species=place_species,
         extra_args=extra_args
     )
     
@@ -147,13 +150,16 @@ Examples:
     --extension fa \\
     --cpus 40
   
-  # With mash database for faster processing
+  # Force species placement in the pplacer tree (GTDB-Tk >=2.7)
   mamisa run-gtdbtk \\
     --selected-dir filtered/Selected/ \\
     --output gtdbtk_results/ \\
     --extension fa \\
     --cpus 40 \\
-    --mash-db /path/to/gtdbtk_mash_db
+    --place-species
+
+Note: GTDB-Tk removed Mash (--mash_db) in v2.5.0 and now screens with skani.
+The old --mash-db flag is accepted but ignored.
         """
     )
     
@@ -172,8 +178,12 @@ Examples:
                         help='Genome file extension (default: fa)')
     parser.add_argument('--cpus', type=int, default=1,
                         help='Number of CPUs to use (default: 1)')
+    parser.add_argument('--place-species', action='store_true',
+                        help='Pass --place_species: place genomes in the pplacer '
+                             'tree even when skani classifies them (GTDB-Tk >=2.7)')
     parser.add_argument('--mash-db', type=Path,
-                        help='Path to GTDB-Tk mash database (optional)')
+                        help='DEPRECATED and ignored: GTDB-Tk removed Mash in '
+                             'v2.5.0 (now uses skani)')
     
     # Tier selection (for --selected-dir mode)
     parser.add_argument('--tiers', default='HQ,MQ,LQ',
@@ -206,12 +216,10 @@ def run(args):
     if args.gtdbtk_args:
         extra_args = shlex.split(args.gtdbtk_args)
     
-    # Validate mash database if provided
+    # --mash-db is obsolete: GTDB-Tk dropped Mash in v2.5.0 (skani now)
     if args.mash_db:
-        if not args.mash_db.exists():
-            log_error(f"Mash database not found: {args.mash_db}")
-            sys.exit(1)
-        log_info(f"Using mash database: {args.mash_db}")
+        log_warning("--mash-db is ignored: GTDB-Tk removed the Mash screen in "
+                    "v2.5.0 and now uses skani. Drop this flag.")
     
     # Process genomes
     print_section("Processing Genomes")
@@ -232,7 +240,7 @@ def run(args):
                 output_base=args.output,
                 extension=args.extension,
                 cpus=args.cpus,
-                mash_db=args.mash_db,
+                place_species=args.place_species,
                 extra_args=extra_args
             )
             results[tier] = result
@@ -257,10 +265,10 @@ def run(args):
             output_dir=args.output,
             extension=args.extension,
             cpus=args.cpus,
-            mash_db=args.mash_db,
+            place_species=args.place_species,
             extra_args=extra_args
         )
-        
+
         results['single'] = {
             'status': 'completed' if exit_code == 0 else 'failed',
             'exit_code': exit_code,

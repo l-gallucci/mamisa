@@ -33,7 +33,8 @@ taxonomically classified, quality-filtered genomes.
 |---|---|---|
 | `run-checkm2` | Completeness/contamination (CheckM2 wrapper) | `mamisa run-checkm2 --genome-dir bins/ -o checkm2/ --threads 40` |
 | `run-gtdbtk` | Taxonomy classification (GTDB-Tk wrapper) | `mamisa run-gtdbtk --genome-dir bins/ -o gtdbtk/ --cpus 40` |
-| `organize-mags` | Split genomes into HQ/MQ/LQ, rename `<sample>__<taxon>__<orig>` | `mamisa organize-mags --checkm2-root checkm2/ --genomes-dir bins/ --gtdbtk-dir gtdbtk/ -o filtered/ --rename --copy` |
+| `run-mimag-rna` | MIMAG rRNA (5S/16S/23S) + tRNA criterion (barrnap + tRNAscan-SE) | `mamisa run-mimag-rna --genome-dir bins/ -o mimag_rna/ --threads 8` |
+| `organize-mags` | Split genomes into HQ/MQ/LQ, rename `<sample>__<taxon>__<orig>`, optional full-MIMAG HQ gate | `mamisa organize-mags --checkm2-root checkm2/ --genomes-dir bins/ --gtdbtk-dir gtdbtk/ -o filtered/ --rename --copy` |
 
 **Setup & environment helpers**
 
@@ -84,6 +85,7 @@ one conda env**. So the layout is:
 | `checkm2` | CheckM2 (+ MaMISA) | `run-checkm2` |
 | `gtdbtk` | GTDB-Tk (+ MaMISA) | `run-gtdbtk` |
 | `gunc` | GUNC + DIAMOND + Prodigal (+ MaMISA) | `run-gunc` |
+| `mimag` | barrnap + tRNAscan-SE (+ MaMISA) | `run-mimag-rna` |
 | `anvio-9` | anvi'o (upstream, no MaMISA needed) | produces the `*-clipping.txt` inputs |
 
 **Do I need all of them?** Only the ones whose commands you use. Just want
@@ -98,7 +100,7 @@ env"; Snakemake just calls the envs above.
 
 ```bash
 pip install -e ".[dev]"   # installs pytest
-pytest                    # 86 unit tests, no external tools needed
+pytest                    # 96 unit tests, no external tools needed
 ```
 
 The suite covers the dependency-free logic: contig-id parsing, CheckM2 tiering,
@@ -115,8 +117,9 @@ to be on `PATH` for the command that uses it.
 |---|---|
 | `process-large-contigs` | CheckM2 |
 | `run-checkm2` | CheckM2 |
-| `run-gtdbtk` | GTDB-Tk |
+| `run-gtdbtk` | GTDB-Tk (>=2.5 uses skani; Mash/`--mash-db` no longer used) |
 | `run-gunc` | GUNC + DIAMOND + Prodigal |
+| `run-mimag-rna` | barrnap + tRNAscan-SE |
 | `check-read-chimeras` | samtools, Kraken2 |
 | `check-chimeras` | (none; `--gunc-dir` consumes GUNC output) |
 | `classify-clipping` | samtools (+ BLAST+ for `--self-blast`) |
@@ -149,7 +152,11 @@ mamba create -n gunc -c conda-forge -c bioconda \
     "gunc=1.1.1" "python=3.10" "pandas>=2,<3" "numpy<2" diamond prodigal
 conda run -n gunc pip install -e .
 
-# 5) anvi'o — upstream only, produces *-clipping.txt (no MaMISA needed)
+# 5) MIMAG rRNA/tRNA — small env for run-mimag-rna (optional, full-MIMAG HQ)
+mamba create -n mimag -c conda-forge -c bioconda barrnap trnascan-se
+conda run -n mimag pip install -e .
+
+# 6) anvi'o — upstream only, produces *-clipping.txt (no MaMISA needed)
 mamba create -n anvio-9 -c conda-forge -c bioconda anvio=9
 ```
 
@@ -157,7 +164,7 @@ Check everything is compatible at any time:
 
 ```bash
 mamisa check-envs --mamisa-env mamisa --checkm2-env checkm2 \
-                  --gtdbtk-env gtdbtk --gunc-env gunc
+                  --gtdbtk-env gtdbtk --gunc-env gunc --mimag-env mimag
 ```
 
 > **Verified (2026-10):** GUNC 1.1.1's Bioconda recipe declares `pandas>=2.0.0`
@@ -194,11 +201,18 @@ conda run -n gtdbtk  env GTDBTK_DATA_PATH=/data/gtdbtk_r220 \
                      mamisa run-gtdbtk  --genome-dir bins/ -o results/gtdbtk --cpus 40
 conda run -n gunc    mamisa run-gunc    --genome-dir bins/ -o results/gunc \
                      --file-suffix .fa --threads 40 --db-file /data/gunc/gunc_db_progenomes2.1.dmnd
+conda run -n mimag   mamisa run-mimag-rna --genome-dir bins/ -o results/mimag_rna --threads 40  # optional
 conda run -n mamisa  mamisa organize-mags --checkm2-root results/checkm2 --genomes-dir bins/ \
-                     --gtdbtk-dir results/gtdbtk -o results/filtered --rename --copy
+                     --gtdbtk-dir results/gtdbtk -o results/filtered --rename --copy \
+                     --mimag-rna-dir results/mimag_rna          # drop this flag to skip the rRNA/tRNA HQ gate
 conda run -n mamisa  mamisa check-chimeras --bins-dir bins/ --gunc-dir results/gunc \
                      --checkm2-report results/checkm2/quality_report.tsv -o results/chimera_report.tsv
 ```
+
+> MIMAG HQ also requires 5S/16S/23S rRNA + tRNAs for ≥18 amino acids, which
+> CheckM2 does not check. `run-mimag-rna` adds that evidence and
+> `organize-mags --mimag-rna-dir` demotes HQ genomes that fail it to MQ. Skip it
+> and HQ is completeness/contamination only.
 
 **Option B — Snakemake orchestrates it.** One command runs the whole DAG. First
 configure once:
@@ -710,6 +724,11 @@ Renaming (sample + taxonomy):
   --tax-level LEVEL           Rank used in name: domain..species (default: genus;
                               falls back up ranks, NoTax if no GTDB hit)
 
+MIMAG rRNA/tRNA HQ gate:
+  --mimag-rna-dir PATH        run-mimag-rna output (mimag_rna_summary.tsv);
+                              demotes HQ genomes lacking 5S/16S/23S rRNA or
+                              >=18 tRNA amino acids to MQ
+
 Other:
   --tiers LIST                Tiers to select (default: HQ,MQ,LQ)
   --extensions LIST           Genome extensions (default: fa,fasta,fna,...)
@@ -717,6 +736,11 @@ Other:
   --name-map / --strip-prefix / --strip-suffix / --name-prefix / --name-suffix
   --dry-run
 ```
+
+> **MiMAG note:** the defaults above split the MIMAG *medium* band into MQ/LQ.
+> For strict MIMAG tiers (HQ comp>90/cont<5, MQ comp≥50/cont<10, LQ comp<50) run
+> with `--mq-comp-min 50 --mq-cont-max 10 --lq-comp-min 0 --lq-cont-max 10`.
+> Full MIMAG HQ additionally needs rRNA/tRNA — add `--mimag-rna-dir` (above).
 
 ### run-gtdbtk
 
@@ -731,9 +755,40 @@ Required:
 Optional:
   --extension STR             Genome file extension (default: fa)
   --cpus INT                  CPUs for GTDB-Tk (default: 1)
-  --mash-db PATH              GTDB-Tk mash database
+  --place-species             Pass --place_species (GTDB-Tk >=2.7): place in the
+                              pplacer tree even when skani classifies
+  --mash-db PATH              DEPRECATED/ignored — GTDB-Tk removed Mash in v2.5.0
+                              (now uses skani)
   --tiers LIST                Tiers to process (default: HQ,MQ,LQ)
   --gtdbtk-args STR           Extra arguments passed to gtdbtk
+```
+
+> **GTDB-Tk version note (latest 2.7.2):** since v2.5.0 GTDB-Tk screens with
+> **skani** and no longer uses Mash, so `--mash_db` is gone. The old
+> `--skip_ani_screen` was replaced by `--place_species` in v2.7.0. MaMISA parses
+> both the old (`fastani_*`) and new (`closest_genome_*`) summary column names,
+> so reports from any recent GTDB-Tk version work.
+
+### run-mimag-rna
+
+Checks the MIMAG rRNA (5S/16S/23S) + tRNA (≥18 amino acids) high-quality
+criterion that CheckM2 cannot evaluate, via barrnap + tRNAscan-SE. Writes
+`mimag_rna_summary.tsv`; feed it to `organize-mags --mimag-rna-dir` to gate HQ.
+
+```
+Required (one of):
+  --selected-dir PATH         Directory with HQ/, MQ/, LQ/ subdirectories
+  --genome-dir PATH           Single directory with genome files
+
+Required:
+  -o, --output PATH           Output directory
+
+Optional:
+  --extension STR             Genome file extension (default: fa)
+  --kingdom {bac,arc,euk}     Kingdom for barrnap/tRNAscan-SE (default: bac)
+  --threads INT               Threads for barrnap (default: 1)
+  --tiers LIST                Tiers to process (default: HQ,MQ,LQ)
+  --keep-intermediate         Keep per-genome barrnap/tRNAscan output files
 ```
 
 ### run-checkm2

@@ -124,11 +124,16 @@ def parse_gtdbtk_summary(summary_file: Path) -> Dict[str, Dict]:
             name = (row.get('user_genome') or row.get('Name') or '').strip()
             if not name:
                 continue
+            # GTDB-Tk >=2.4 renamed FastANI columns to closest_genome_* (skani).
+            # Accept both so old and new summary files parse.
             results[name] = {
                 'classification': row.get('classification', '').strip(),
-                'fastani_reference': row.get('fastani_reference', '').strip(),
-                'fastani_ani': _safe_float(row.get('fastani_ani')),
-                'fastani_af': _safe_float(row.get('fastani_af')),
+                'closest_reference': (row.get('closest_genome_reference')
+                                      or row.get('fastani_reference') or '').strip(),
+                'closest_ani': _safe_float(row.get('closest_genome_ani')
+                                           or row.get('fastani_ani')),
+                'closest_af': _safe_float(row.get('closest_genome_af')
+                                          or row.get('fastani_af')),
                 'msa_percent': _safe_float(row.get('msa_percent')),
                 'red_value': _safe_float(row.get('red_value')),
                 'warnings': row.get('warnings', '').strip(),
@@ -209,7 +214,6 @@ def has_taxonomy_warning(tax_record: Dict) -> bool:
     Return True when a GTDB-Tk record carries signals of unreliable placement:
       - non-empty warnings field
       - MSA percent < 10 % (poor marker gene recovery)
-      - no FastANI reference match (placed by RED value only)
     """
     if tax_record.get('warnings'):
         return True
