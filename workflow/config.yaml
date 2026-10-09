@@ -25,6 +25,11 @@ checkm2_db: ""                                                     # optional; b
 sample_regex: "^([^._]+)"   # capture group 1 = sample id from the filename
 tax_level: "genus"          # rank used in the renamed output
 
+# MIMAG rRNA/tRNA high-quality gate (barrnap + tRNAscan-SE)
+# Set to false to skip the rRNA/tRNA step; HQ is then comp/cont only.
+mimag_rna: true
+mimag_kingdom: "bac"        # bac | arc | euk (barrnap/tRNAscan-SE kingdom)
+
 # ── Environment mode ────────────────────────────────────────────────────────
 # Two ways to supply the conflicting tools:
 #   use_named_envs: false  → run `snakemake --use-conda`; Snakemake builds one
@@ -37,3 +42,4 @@ env_mamisa: ""     # light CLI tools + MaMISA (organize-mags, check-chimeras)
 env_checkm2: ""    # CheckM2
 env_gtdbtk: ""     # GTDB-Tk
 env_gunc: ""       # GUNC
+env_mimag: ""      # barrnap + tRNAscan-SE (run-mimag-rna)

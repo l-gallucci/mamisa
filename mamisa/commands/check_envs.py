@@ -42,6 +42,8 @@ TOOL_VERSION_CMD = {
     'gunc':     ['gunc', '--version'],
     'diamond':  ['diamond', 'version'],
     'prodigal': ['prodigal', '-v'],
+    'barrnap':  ['barrnap', '--version'],
+    'tRNAscan-SE': ['tRNAscan-SE', '-h'],
 }
 
 # per role: required tools (FAIL if missing) and optional (WARN if missing)
@@ -50,6 +52,7 @@ ROLE_TOOLS = {
     'checkm2': {'required': ['checkm2'], 'optional': ['diamond']},
     'gtdbtk':  {'required': ['gtdbtk'], 'optional': []},
     'gunc':    {'required': ['gunc', 'diamond', 'prodigal'], 'optional': []},
+    'mimag':   {'required': ['barrnap', 'tRNAscan-SE'], 'optional': []},
 }
 
 INSTALL_HINT = {
@@ -64,6 +67,8 @@ INSTALL_HINT = {
     'prodigal': 'conda install -n {env} -c bioconda prodigal',
     'gunc':     ('recreate the env pinned: mamba create -n {env} -c conda-forge -c bioconda '
                  '"gunc=1.1.1" "python=3.10" "pandas>=2,<3" "numpy<2" diamond prodigal'),
+    'barrnap':  'conda install -n {env} -c bioconda barrnap',
+    'tRNAscan-SE': 'conda install -n {env} -c bioconda trnascan-se',
 }
 
 _VER_RE = re.compile(r'(\d+)\.(\d+)(?:\.(\d+))?')
@@ -193,7 +198,7 @@ def run_checks(envs: dict, repo: Path):
     envs: {role: env_name} for roles to check. Returns overall ok bool.
     """
     overall = True
-    for role in ('mamisa', 'checkm2', 'gtdbtk', 'gunc'):
+    for role in ('mamisa', 'checkm2', 'gtdbtk', 'gunc', 'mimag'):
         env = envs.get(role)
         if not env:
             continue
@@ -222,6 +227,7 @@ Examples:
     parser.add_argument('--checkm2-env', help='env with CheckM2')
     parser.add_argument('--gtdbtk-env', help='env with GTDB-Tk')
     parser.add_argument('--gunc-env', help='env with GUNC')
+    parser.add_argument('--mimag-env', help='env with barrnap + tRNAscan-SE')
     parser.set_defaults(func=run)
     return parser
 
@@ -239,11 +245,12 @@ def run(args):
         'checkm2': args.checkm2_env,
         'gtdbtk': args.gtdbtk_env,
         'gunc': args.gunc_env,
+        'mimag': args.mimag_env,
     }
     envs = {r: e for r, e in envs.items() if e}
     if not envs:
         log_error("No envs given. Pass at least one of "
-                  "--mamisa-env/--checkm2-env/--gtdbtk-env/--gunc-env")
+                  "--mamisa-env/--checkm2-env/--gtdbtk-env/--gunc-env/--mimag-env")
         sys.exit(1)
 
     print_section("Sanity check")

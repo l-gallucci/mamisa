@@ -112,6 +112,8 @@ Examples:
     parser.add_argument('--checkm2-env', default=None, help='Existing env with CheckM2')
     parser.add_argument('--gtdbtk-env', default=None, help='Existing env with GTDB-Tk')
     parser.add_argument('--gunc-env', default=None, help='Existing env with GUNC')
+    parser.add_argument('--mimag-env', default=None,
+                        help='Existing env with barrnap + tRNAscan-SE (run-mimag-rna)')
 
     parser.add_argument('--install', action='store_true',
                         help='Build all per-rule conda envs via snakemake --conda-create-envs-only')
@@ -187,6 +189,7 @@ def run(args):
         'env_checkm2': args.checkm2_env,
         'env_gtdbtk': args.gtdbtk_env,
         'env_gunc': args.gunc_env,
+        'env_mimag': args.mimag_env,
     }
     any_env = any(v for v in env_map.values())
     for key, val in env_map.items():
@@ -210,6 +213,7 @@ def run(args):
         'checkm2': args.checkm2_env,
         'gtdbtk': args.gtdbtk_env,
         'gunc': args.gunc_env,
+        'mimag': args.mimag_env,
     }
     provided_envs = {r: e for r, e in provided_envs.items() if e}
     if provided_envs and not args.no_check and not args.dry_run:

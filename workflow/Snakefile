@@ -6,10 +6,14 @@
 #
 # Pipeline (binning + anvi'o misassembly detection are assumed done upstream):
 #
-#   genomes_dir ─┬─> run-checkm2 ─┐
-#                ├─> run-gtdbtk ──┼─> organize-mags (HQ/MQ/LQ + rename)
-#                └─> run-gunc ────┘
+#   genomes_dir ─┬─> run-checkm2 ───┐
+#                ├─> run-gtdbtk ────┤
+#                ├─> run-mimag-rna ─┼─> organize-mags (HQ/MQ/LQ + rename + MIMAG rRNA/tRNA gate)
+#                └─> run-gunc ──────┘
 #                         └──────────> check-chimeras (GC + contamination + GUNC)
+#
+# run-mimag-rna (barrnap + tRNAscan-SE) is optional: set `mimag_rna: false` to
+# skip it; HQ is then based on completeness/contamination only.
 #
 # Run:
 #   snakemake --use-conda --cores 20 -s workflow/Snakefile --configfile workflow/config.yaml
@@ -31,7 +35,12 @@ ENVS = {
     "checkm2": config.get("env_checkm2", ""),
     "gtdbtk":  config.get("env_gtdbtk", ""),
     "gunc":    config.get("env_gunc", ""),
+    "mimag":   config.get("env_mimag", ""),
 }
+
+# Optional MIMAG rRNA/tRNA HQ gate (barrnap + tRNAscan-SE)
+MIMAG_RNA   = bool(config.get("mimag_rna", False))
+MIMAG_KING  = config.get("mimag_kingdom", "bac")
 
 
 def pre(role):
@@ -95,16 +104,43 @@ rule run_gunc:
         "--file-suffix .{EXT} --threads {threads} --db-file {config[gunc_db]}"
 
 
+rule run_mimag_rna:
+    input:
+        genomes=GENOMES,
+    output:
+        summary=f"{OUT}/mimag_rna/mimag_rna_summary.tsv",
+    params:
+        pre=pre("mimag"),
+        outdir=f"{OUT}/mimag_rna",
+    threads: THREADS
+    conda:
+        "envs/mimag.yaml"
+    shell:
+        "{params.pre}mamisa run-mimag-rna --genome-dir {input.genomes} --output {params.outdir} "
+        "--extension {EXT} --kingdom {MIMAG_KING} --threads {threads}"
+
+
+def organize_inputs(_):
+    """Inputs for organize-mags; add the MIMAG rRNA/tRNA summary when enabled."""
+    inputs = {
+        "checkm2": f"{OUT}/checkm2/quality_report.tsv",
+        "gtdbtk":  f"{OUT}/gtdbtk",
+    }
+    if MIMAG_RNA:
+        inputs["mimag"] = f"{OUT}/mimag_rna/mimag_rna_summary.tsv"
+    return inputs
+
+
 rule organize_mags:
     input:
-        checkm2=f"{OUT}/checkm2/quality_report.tsv",
-        gtdbtk=f"{OUT}/gtdbtk",
+        unpack(organize_inputs),
     output:
         merged=f"{OUT}/organized/merged_quality.tsv",
     params:
         pre=pre("mamisa"),
         outdir=f"{OUT}/organized",
         checkm2_root=f"{OUT}/checkm2",
+        mimag=(f"--mimag-rna-dir {OUT}/mimag_rna" if MIMAG_RNA else ""),
     conda:
         "envs/mamisa.yaml"
     shell:
@@ -112,7 +148,7 @@ rule organize_mags:
         "--genomes-dir {GENOMES} --gtdbtk-dir {input.gtdbtk} "
         "--output {params.outdir} --rename --copy "
         "--sample-regex '{config[sample_regex]}' --tax-level {config[tax_level]} "
-        "--extensions {EXT}"
+        "--extensions {EXT} {params.mimag}"
 
 
 rule check_chimeras:

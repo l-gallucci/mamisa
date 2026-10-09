@@ -1,0 +1,13 @@
+# rRNA (barrnap) + tRNA (tRNAscan-SE) for the MIMAG high-quality criterion.
+# Small, light env; MaMISA is dependency-free and pip-installed alongside.
+name: mamisa-mimag
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - barrnap
+  - trnascan-se
+  - pip
+  - pip:
+      # Until published to PyPI, replace `mamisa` with: -e /absolute/path/to/mamisa
+      - mamisa
