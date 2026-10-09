@@ -29,12 +29,14 @@ def check_checkm2_available() -> bool:
 
 
 def get_checkm2_version() -> Optional[str]:
-    """Get CheckM2 version"""
+    """Get CheckM2 version (best-effort; never blocks the run)."""
     try:
         result = subprocess.run(['checkm2', '--version'],
-                                capture_output=True, text=True, check=True)
-        return result.stdout.strip()
+                                capture_output=True, text=True,
+                                stdin=subprocess.DEVNULL, timeout=120)
+        return (result.stdout or result.stderr).strip() or None
     except Exception:
+        # a slow/hanging `checkm2 --version` must not block prediction
         return None
 
 
@@ -67,9 +69,12 @@ def run_checkm2_predict(genome_dir: Path, output_dir: Path,
 
     log_info(f"\nRunning command:")
     log_info(f"  {' '.join(cmd)}")
+    log_info("CheckM2 is running (output below); this can take a while...")
 
     try:
-        result = subprocess.run(cmd, check=True)
+        # stdin=DEVNULL so a DB/version prompt can't silently wait for input;
+        # stdout/stderr inherited so CheckM2's own progress is visible.
+        result = subprocess.run(cmd, check=True, stdin=subprocess.DEVNULL)
         return result.returncode
     except subprocess.CalledProcessError as e:
         log_error(f"CheckM2 failed with exit code {e.returncode}")
@@ -195,9 +200,12 @@ def run(args):
     if not check_checkm2_available():
         sys.exit(1)
 
+    log_info("Querying CheckM2 version (skipped after 120s)...")
     version = get_checkm2_version()
     if version:
         log_info(f"CheckM2 version: {version}")
+    else:
+        log_warning("Could not read CheckM2 version (slow/hanging --version); continuing")
 
     extra_args = shlex.split(args.checkm2_args) if args.checkm2_args else []
 

@@ -62,7 +62,8 @@ def check_gunc_env() -> bool:
     # here as a traceback / non-zero exit rather than a version string.
     try:
         result = subprocess.run(['gunc', '--version'],
-                                capture_output=True, text=True, timeout=60)
+                                capture_output=True, text=True,
+                                stdin=subprocess.DEVNULL, timeout=60)
     except Exception as e:
         log_error(f"Could not run 'gunc --version': {e}")
         return False
@@ -116,7 +117,7 @@ def run_gunc(input_dir: Path, output_dir: Path, file_suffix: str,
     log_info(f"  {' '.join(cmd)}")
 
     try:
-        result = subprocess.run(cmd, check=True)
+        result = subprocess.run(cmd, check=True, stdin=subprocess.DEVNULL)
         return result.returncode
     except subprocess.CalledProcessError as e:
         log_error(f"GUNC failed with exit code {e.returncode}")
