@@ -757,6 +757,8 @@ Optional:
   --cpus INT                  CPUs for GTDB-Tk (default: 1)
   --place-species             Pass --place_species (GTDB-Tk >=2.7): place in the
                               pplacer tree even when skani classifies
+  --skip-existing             Skip classify_wf if a gtdbtk.*.summary.tsv already
+                              exists in the output (reuse previous results)
   --mash-db PATH              DEPRECATED/ignored — GTDB-Tk removed Mash in v2.5.0
                               (now uses skani)
   --tiers LIST                Tiers to process (default: HQ,MQ,LQ)

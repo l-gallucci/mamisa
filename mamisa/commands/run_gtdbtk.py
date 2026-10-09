@@ -40,9 +40,17 @@ def get_gtdbtk_version() -> Optional[str]:
         return None
 
 
+def has_existing_summary(output_dir: Path) -> bool:
+    """True if a GTDB-Tk summary TSV already exists under output_dir."""
+    if not output_dir.exists():
+        return False
+    return bool(list(output_dir.rglob("gtdbtk.*.summary.tsv")))
+
+
 def run_gtdbtk_classify(genome_dir: Path, output_dir: Path,
                        extension: str, cpus: int,
                        place_species: bool = False,
+                       skip_existing: bool = False,
                        extra_args: list = None) -> int:
     """
     Run GTDB-Tk classify_wf
@@ -50,6 +58,11 @@ def run_gtdbtk_classify(genome_dir: Path, output_dir: Path,
     Returns:
         Exit code from gtdbtk
     """
+
+    if skip_existing and has_existing_summary(output_dir):
+        log_info(f"Existing GTDB-Tk summary found in {output_dir}; "
+                 f"skipping classify_wf (--skip-existing)")
+        return 0
 
     cmd = [
         'gtdbtk',
@@ -85,6 +98,7 @@ def run_gtdbtk_classify(genome_dir: Path, output_dir: Path,
 def process_tier_directory(base_dir: Path, tier: str, output_base: Path,
                           extension: str, cpus: int,
                           place_species: bool = False,
+                          skip_existing: bool = False,
                           extra_args: list = None) -> dict:
     """
     Process a single tier directory
@@ -118,9 +132,10 @@ def process_tier_directory(base_dir: Path, tier: str, output_base: Path,
         extension=extension,
         cpus=cpus,
         place_species=place_species,
+        skip_existing=skip_existing,
         extra_args=extra_args
     )
-    
+
     return {
         'status': 'completed' if exit_code == 0 else 'failed',
         'exit_code': exit_code,
@@ -181,6 +196,9 @@ The old --mash-db flag is accepted but ignored.
     parser.add_argument('--place-species', action='store_true',
                         help='Pass --place_species: place genomes in the pplacer '
                              'tree even when skani classifies them (GTDB-Tk >=2.7)')
+    parser.add_argument('--skip-existing', action='store_true',
+                        help='Skip classify_wf if a gtdbtk.*.summary.tsv already '
+                             'exists in the output (reuse previous results)')
     parser.add_argument('--mash-db', type=Path,
                         help='DEPRECATED and ignored: GTDB-Tk removed Mash in '
                              'v2.5.0 (now uses skani)')
@@ -241,6 +259,7 @@ def run(args):
                 extension=args.extension,
                 cpus=args.cpus,
                 place_species=args.place_species,
+                skip_existing=args.skip_existing,
                 extra_args=extra_args
             )
             results[tier] = result
@@ -266,6 +285,7 @@ def run(args):
             extension=args.extension,
             cpus=args.cpus,
             place_species=args.place_species,
+            skip_existing=args.skip_existing,
             extra_args=extra_args
         )
 

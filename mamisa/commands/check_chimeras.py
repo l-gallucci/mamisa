@@ -128,7 +128,7 @@ def run_chimera_check(
 
     if not bin_files:
         log_error(f"No bin files found in {bins_dir} with extensions: {extensions}")
-        return {}
+        return {'risk': {}, 'gunc': {'pass': 0, 'fail': 0, 'na': 0}, 'gunc_used': bool(gunc_dir)}
 
     log_info(f"Found {len(bin_files):,} bin file(s)")
 
@@ -136,6 +136,7 @@ def run_chimera_check(
 
     rows: List[Dict] = []
     risk_counts: Dict[str, int] = {'High': 0, 'Medium': 0, 'Low': 0, 'Clean': 0}
+    gunc_counts: Dict[str, int] = {'pass': 0, 'fail': 0, 'na': 0}
 
     for bin_file in bin_files:
         bin_name = bin_file.stem
@@ -168,6 +169,13 @@ def run_chimera_check(
         gunc_record = gunc_map.get(bin_name, {})
         gunc_fail = (not gunc_record['pass_gunc']) if gunc_record else None
         gunc_css = gunc_record.get('css') if gunc_record else None
+        if gunc_dir:
+            if not gunc_record:
+                gunc_counts['na'] += 1
+            elif gunc_record['pass_gunc']:
+                gunc_counts['pass'] += 1
+            else:
+                gunc_counts['fail'] += 1
 
         # Risk score
         risk, reasons = assess_chimera_risk(
@@ -227,7 +235,7 @@ def run_chimera_check(
             writer.writerows(rows)
         log_info(f"\nChimera report written to: {output_file}")
 
-    return risk_counts
+    return {'risk': risk_counts, 'gunc': gunc_counts, 'gunc_used': bool(gunc_dir)}
 
 
 # ---------------------------------------------------------------------------
@@ -336,7 +344,7 @@ def run(args):
 
     print_header("MaMISA - Chimera Check")
 
-    risk_counts = run_chimera_check(
+    result = run_chimera_check(
         bins_dir=args.bins_dir,
         output_file=args.output,
         extensions=extensions,
@@ -349,6 +357,7 @@ def run(args):
         dry_run=args.dry_run,
     )
 
+    risk_counts = result['risk']
     if not risk_counts:
         log_error("No bins were analysed — check --bins-dir and --extensions")
         sys.exit(1)
@@ -364,6 +373,18 @@ def run(args):
     if total > 0:
         pct = 100 * flagged / total
         print(f"\n  Flagged (High + Medium): {flagged:,} / {total:,} ({pct:.1f}%)")
+
+    # GUNC pass/fail tally (only when --gunc-dir was supplied)
+    if result['gunc_used']:
+        g = result['gunc']
+        evaluated = g['pass'] + g['fail']
+        print(f"\n  GUNC pass.GUNC=True:     {g['pass']:>6,}")
+        print(f"  GUNC chimeras (False):   {g['fail']:>6,}")
+        if g['na']:
+            print(f"  GUNC no result:          {g['na']:>6,}")
+        if evaluated:
+            pct = 100 * g['fail'] / evaluated
+            print(f"  GUNC chimera rate:       {pct:.1f}% of {evaluated:,} evaluated")
 
     if args.dry_run:
         log_warning("\nDRY-RUN mode: no output file written")
