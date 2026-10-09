@@ -23,6 +23,7 @@ from ..utils.chimera import (
     parse_gtdbtk_summary,
     extract_taxonomy_level,
 )
+from ..utils.rrna import parse_mimag_rna_summary
 from ..utils.validation import validate_dir_exists, validate_file_exists
 from ..utils.logging import log_info, log_error, log_warning, print_header, print_section
 
@@ -160,6 +161,85 @@ def lookup_taxonomy(tax: Dict[str, Dict], record_name: str,
         if key in tax:
             return tax[key].get('classification', '')
     return None
+
+
+# ---------------------------------------------------------------------------
+# MIMAG rRNA/tRNA gate (parser side of run-mimag-rna)
+# ---------------------------------------------------------------------------
+
+_RNA_EXTS = ('.fa', '.fasta', '.fna', '.fa.gz', '.fasta.gz', '.fna.gz')
+
+
+def _strip_ext(name: str) -> str:
+    for ext in _RNA_EXTS:
+        if name.endswith(ext):
+            return name[:-len(ext)]
+    return name
+
+
+def load_mimag_rna(mimag_dir: Path) -> Dict[str, Dict]:
+    """
+    Load a run-mimag-rna summary from a directory (finds mimag_rna_summary.tsv),
+    keyed by both the full genome filename and its extension-stripped stem so it
+    matches CheckM2's 'Name' column however the names were written.
+    """
+    summaries = sorted(mimag_dir.rglob("mimag_rna_summary.tsv"))
+    if not summaries:
+        log_warning(f"No mimag_rna_summary.tsv found under {mimag_dir}")
+        return {}
+    merged: Dict[str, Dict] = {}
+    for summary in summaries:
+        rows = parse_mimag_rna_summary(summary)
+        for name, rec in rows.items():
+            merged[name] = rec
+            merged[_strip_ext(name)] = rec
+    log_info(f"Loaded MIMAG rRNA/tRNA status for "
+             f"{len({id(v) for v in merged.values()}):,} genomes")
+    return merged
+
+
+def lookup_mimag_rna(mimag: Dict[str, Dict], record_name: str) -> Optional[Dict]:
+    """Resolve a MIMAG rRNA/tRNA record for a genome by trying several keys."""
+    for key in (record_name, _strip_ext(record_name),
+                record_name.rsplit('.', 1)[0]):
+        if key in mimag:
+            return mimag[key]
+    return None
+
+
+def apply_mimag_rna_gate(records: List[dict], mimag: Dict[str, Dict]) -> Dict:
+    """
+    Enforce the full-MIMAG HQ criterion: any genome tiered HQ that lacks the
+    rRNA (5S/16S/23S) or tRNA (>=18 aa) requirement is demoted HQ -> MQ.
+    Annotates each record with mimag_rna_ok and hq_rna_demoted, and returns
+    recomputed tier counts.
+    """
+    from collections import defaultdict
+    counts: Dict[str, int] = defaultdict(int)
+    n_demoted = 0
+    n_missing = 0
+
+    for rec in records:
+        rna = lookup_mimag_rna(mimag, rec['name'])
+        if rna is None:
+            rec['mimag_rna_ok'] = ''
+            rec['hq_rna_demoted'] = ''
+            if rec['tier'] == 'HQ':
+                n_missing += 1
+        else:
+            rec['mimag_rna_ok'] = bool(rna.get('mimag_rna_ok'))
+            rec['hq_rna_demoted'] = False
+            if rec['tier'] == 'HQ' and not rna.get('mimag_rna_ok'):
+                rec['tier'] = 'MQ'
+                rec['hq_rna_demoted'] = True
+                n_demoted += 1
+        counts[rec['tier']] += 1
+
+    if n_demoted:
+        log_warning(f"{n_demoted} genome(s) demoted HQ->MQ (failed MIMAG rRNA/tRNA)")
+    if n_missing:
+        log_warning(f"{n_missing} HQ genome(s) had no rRNA/tRNA record; left as HQ")
+    return dict(counts)
 
 
 def build_output_name(genome_file: Path, record_name: str,
@@ -351,6 +431,12 @@ Examples:
                                        'family', 'genus', 'species'],
                               help='Taxonomic rank used in the name (default: genus)')
 
+    # Full-MIMAG HQ gate (parser side of run-mimag-rna)
+    parser.add_argument('--mimag-rna-dir', type=Path,
+                        help='Directory with a run-mimag-rna summary '
+                             '(mimag_rna_summary.tsv); demotes HQ genomes that '
+                             'lack 5S/16S/23S rRNA or >=18 tRNA amino acids to MQ')
+
     # Name normalization (for locating files on disk)
     parser.add_argument('--name-prefix', default='', help='Add prefix to genome names')
     parser.add_argument('--name-suffix', default='', help='Add suffix to genome names')
@@ -408,6 +494,16 @@ def run(args):
         log_error(str(e))
         sys.exit(1)
 
+    # Full-MIMAG HQ gate: demote HQ genomes lacking rRNA/tRNA to MQ
+    gated = False
+    if args.mimag_rna_dir:
+        validate_dir_exists(args.mimag_rna_dir, "MIMAG rRNA/tRNA directory")
+        print_section("Applying MIMAG rRNA/tRNA Gate")
+        mimag = load_mimag_rna(args.mimag_rna_dir)
+        if mimag:
+            tier_counts = apply_mimag_rna_gate(records, mimag)
+            gated = True
+
     print_section("Quality Tier Summary")
     for tier in ['HQ', 'MQ', 'LQ', 'Fail']:
         print(f"  {tier:4s}: {tier_counts.get(tier, 0):>8,} genomes")
@@ -415,11 +511,13 @@ def run(args):
 
     merged_file = args.output / "merged_quality.tsv"
     if not args.dry_run:
+        fieldnames = ['report_path', 'name', 'completeness', 'contamination', 'tier']
+        if gated:
+            fieldnames += ['mimag_rna_ok', 'hq_rna_demoted']
         with open(merged_file, 'w', newline='') as f:
             writer = csv.DictWriter(
-                f,
-                fieldnames=['report_path', 'name', 'completeness', 'contamination', 'tier'],
-                delimiter='\t',
+                f, fieldnames=fieldnames, delimiter='\t',
+                extrasaction='ignore',
             )
             writer.writeheader()
             writer.writerows(records)

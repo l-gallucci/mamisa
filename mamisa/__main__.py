@@ -14,6 +14,7 @@ from mamisa.commands import filter_checkm2
 from mamisa.commands import run_checkm2
 from mamisa.commands import run_gtdbtk
 from mamisa.commands import run_gunc
+from mamisa.commands import run_mimag_rna
 from mamisa.commands import process_large_contigs
 from mamisa.commands import check_chimeras
 from mamisa.commands import check_read_chimeras
@@ -38,6 +39,7 @@ Available commands:
                           (alias: filter-checkm2, deprecated)
   run-checkm2             Run CheckM2 completeness/contamination prediction
   run-gtdbtk              Run GTDB-Tk taxonomy classification
+  run-mimag-rna           Check MIMAG rRNA (5S/16S/23S) + tRNA criterion (barrnap + tRNAscan-SE)
   process-large-contigs   Extract, QC, and filter large contigs intelligently
   run-gunc                Run GUNC gene-level chimerism/contamination detection
   check-chimeras          Detect chimeric MAGs and circular contigs (GC + GUNC)
@@ -68,6 +70,7 @@ For more information, visit: https://github.com/l-gallucci/mamisa
     run_checkm2.register_parser(subparsers)
     run_gtdbtk.register_parser(subparsers)
     run_gunc.register_parser(subparsers)
+    run_mimag_rna.register_parser(subparsers)
     process_large_contigs.register_parser(subparsers)
     check_chimeras.register_parser(subparsers)
     check_read_chimeras.register_parser(subparsers)
