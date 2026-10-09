@@ -72,11 +72,14 @@ Downloads run inside the tool's conda env (override names with --*-env).
                         help='Existing GTDB-Tk data DIRECTORY (GTDBTK_DATA_PATH)')
     parser.add_argument('--gunc-db', type=Path,
                         help='Existing GUNC database FILE (.dmnd)')
-    parser.add_argument('--gunc-db-source', choices=['progenomes', 'gtdb'],
-                        default='progenomes',
-                        help='Which GUNC reference DB to download (default: '
-                             'progenomes). Use gtdb for environmental MAGs: '
-                             'broader taxa, fewer false chimeric calls on novelty')
+    parser.add_argument('--gunc-db-source',
+                        choices=['progenomes_2.1', 'progenomes_3',
+                                 'gtdb_95', 'gtdb_214'],
+                        default='progenomes_2.1',
+                        help='Which GUNC reference DB to download (GUNC >=1.1.1 '
+                             'names; default: progenomes_2.1). For environmental '
+                             'MAGs prefer gtdb_214 (GTDB r214): broader taxa, '
+                             'fewer false chimeric calls on novel lineages')
     parser.add_argument('--checkm2-db', type=Path,
                         help='Existing CheckM2 database FILE (.dmnd)')
 
@@ -149,9 +152,10 @@ def handle_gunc(args, config_file):
     if not args.download:
         log_info("  No path given and --download not set; skipped")
         return True
-    source = getattr(args, 'gunc_db_source', 'progenomes')
+    source = getattr(args, 'gunc_db_source', 'progenomes_2.1')
     target = (args.db_dir / 'gunc').resolve()
     log_info(f"  Downloading GUNC DB ({source}) into {target} (~13-16 GB)")
+    # GUNC >=1.1.1 fetches from Zenodo (old EMBL webserver is a fallback).
     dl_cmd = ['gunc', 'download_db', '-db', source, str(target)]
     if args.dry_run:
         log_info(f"  Would run: conda run -n {args.gunc_env} {' '.join(dl_cmd)}")
@@ -162,9 +166,10 @@ def handle_gunc(args, config_file):
         log_error("  GUNC download failed.")
         return False
     # Prefer the .dmnd matching the requested source if several are present
+    # (filenames like gunc_db_gtdb214.dmnd / gunc_db_progenomes2.1.dmnd).
     dmnds = sorted(target.glob('*.dmnd'))
     if dmnds:
-        tag = 'gtdb' if source == 'gtdb' else 'progenomes'
+        tag = source.replace('_', '').lower()
         chosen = next((d for d in dmnds if tag in d.name.lower()), dmnds[0])
         _write_config(config_file, 'gunc_db', chosen.resolve(), args.dry_run)
     else:

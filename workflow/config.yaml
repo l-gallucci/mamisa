@@ -18,7 +18,7 @@ threads: 20
 
 # Reference databases (required by the matching tool)
 gtdbtk_data: "/path/to/gtdbtk_data"                               # $GTDBTK_DATA_PATH
-gunc_db: "/path/to/gunc_db/gunc_db_progenomes2.1.dmnd"            # GUNC .dmnd
+gunc_db: "/path/to/gunc_db/gunc_db_gtdb214.dmnd"                  # GUNC .dmnd; gtdb_214 recommended for environmental MAGs (progenomes_2.1 is isolate-biased)
 checkm2_db: ""                                                     # optional; blank = CheckM2 default
 
 # organize-mags renaming

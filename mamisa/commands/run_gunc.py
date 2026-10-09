@@ -168,13 +168,15 @@ complementing check-chimeras (GC/read signals). Feed the output back in with
 
 Dependencies (GUNC is old — pin versions):
   {RECOMMENDED_ENV}
-  gunc download_db ./gunc_db/          # ~13 GB, or set GUNC_DB
+  gunc download_db -db gtdb_214 ./gunc_db/   # GUNC>=1.1.1, from Zenodo; or set GUNC_DB
+  # DB choices: progenomes_2.1 (default), progenomes_3, gtdb_95, gtdb_214
+  # gtdb_214 recommended for environmental MAGs
 
 Examples:
   # Single genome directory
   mamisa run-gunc \\
     --genome-dir genomes/ --output gunc_out/ \\
-    --file-suffix .fa --threads 20 --db-file gunc_db/gunc_db_progenomes2.1.dmnd
+    --file-suffix .fa --threads 20 --db-file gunc_db/gunc_db_gtdb214.dmnd
 
   # All tiers from organize-mags, DB from $GUNC_DB
   mamisa run-gunc \\
