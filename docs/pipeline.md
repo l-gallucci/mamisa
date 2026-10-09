@@ -149,6 +149,12 @@ mamisa check-read-chimeras \
 Outputs `chimera_read_report.tsv` (per-contig) and `chimera_read_windows.tsv`
 (sliding-window detail for classify-clipping).
 
+Classifier choice: `--kraken2-output` (k-mer, fastest) or `--kaiju-output`
+(protein-level, more sensitive on divergent/novel organisms). Give exactly one.
+For names use `--kraken2-report` with Kraken2, or `--kaiju-names names.dmp` with
+Kaiju. BLAST is not used here on purpose: per-read BLAST against nt is orders of
+magnitude slower and short reads give low-specificity hits.
+
 ### Step 3b - Detect chimeric MAGs (GC + GUNC, optional)
 
 Run after binning for a composition + gene-consistency check on complete bins.

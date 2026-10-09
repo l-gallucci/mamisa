@@ -26,11 +26,15 @@ CheckM2:
 ```
 Required:
   --bam PATH                  Sorted, indexed BAM file
-  --kraken2-output PATH       Kraken2 per-read classification output
   -o, --output-dir PATH       Output directory
+  one classifier (mutually exclusive):
+    --kraken2-output PATH     Kraken2 per-read classification output, or
+    --kaiju-output PATH       Kaiju per-read output (protein-level, more
+                              sensitive on divergent taxa)
 
 Optional:
-  --kraken2-report PATH       Kraken2 report (adds taxon names to output)
+  --kraken2-report PATH       Kraken2 report (adds taxon names; with Kraken2)
+  --kaiju-names PATH          NCBI names.dmp (adds taxon names; with Kaiju)
   --assembly PATH             Assembly FASTA (for contig lengths if not in BAM)
   --min-mapq INT              Min mapping quality (default: 20)
   --min-reads INT             Min reads per contig to report (default: 10)

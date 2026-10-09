@@ -49,3 +49,6 @@ requires 5S/16S/23S rRNA and tRNAs for at least 18 amino acids, which
   doi:10.1093/nar/gkab688
 - Kraken2: Wood D.E. et al. (2019). Genome Biology 20:257.
   doi:10.1186/s13059-019-1891-0
+- Kaiju: Menzel P. et al. (2016). *Fast and sensitive taxonomic classification for
+  metagenomics with Kaiju.* Nature Communications 7:11257.
+  doi:10.1038/ncomms11257

@@ -36,7 +36,7 @@ Chimera detection:
 
 | Command | What it does |
 |---|---|
-| `check-read-chimeras` | Chimeras from read-level taxonomy (Kraken2 + BAM) |
+| `check-read-chimeras` | Chimeras from read-level taxonomy (Kraken2 or Kaiju + BAM) |
 | `check-chimeras` | Chimeric MAGs from GC + contamination + GUNC + GTDB signals |
 | `run-gunc` | Gene-level chimerism/contamination (GUNC wrapper) |
 

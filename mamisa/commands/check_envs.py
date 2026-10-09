@@ -8,7 +8,7 @@ whether the versions are compatible with MaMISA's wrappers. On any problem it
 prints exactly what to install.
 
 Roles and what each env must provide:
-  mamisa   light CLI tools (samtools, blastn, bedtools, kraken2, meryl) — optional
+  mamisa   light CLI tools (samtools, blastn, bedtools, kraken2, kaiju, meryl) — optional
   checkm2  checkm2 (+ diamond)
   gtdbtk   gtdbtk
   gunc     gunc (runnable) + diamond + prodigal, with pandas 2.x / numpy < 2
@@ -36,6 +36,7 @@ TOOL_VERSION_CMD = {
     'blastn':   ['blastn', '-version'],
     'bedtools': ['bedtools', '--version'],
     'kraken2':  ['kraken2', '--version'],
+    'kaiju':    ['python', '-c', 'import shutil,sys;sys.exit(0 if shutil.which("kaiju") else 1)'],
     'meryl':    ['meryl', '--version'],
     'checkm2':  ['checkm2', '--version'],
     'gtdbtk':   ['gtdbtk', '--version'],
@@ -48,7 +49,7 @@ TOOL_VERSION_CMD = {
 
 # per role: required tools (FAIL if missing) and optional (WARN if missing)
 ROLE_TOOLS = {
-    'mamisa':  {'required': [], 'optional': ['samtools', 'blastn', 'bedtools', 'kraken2', 'meryl']},
+    'mamisa':  {'required': [], 'optional': ['samtools', 'blastn', 'bedtools', 'kraken2', 'kaiju', 'meryl']},
     'checkm2': {'required': ['checkm2'], 'optional': ['diamond']},
     'gtdbtk':  {'required': ['gtdbtk'], 'optional': []},
     'gunc':    {'required': ['gunc', 'diamond', 'prodigal'], 'optional': []},
@@ -60,6 +61,7 @@ INSTALL_HINT = {
     'blastn':   'conda install -n {env} -c bioconda blast',
     'bedtools': 'conda install -n {env} -c bioconda bedtools',
     'kraken2':  'conda install -n {env} -c bioconda kraken2',
+    'kaiju':    'conda install -n {env} -c bioconda kaiju',
     'meryl':    'conda install -n {env} -c bioconda meryl',
     'checkm2':  'conda install -n {env} -c bioconda checkm2',
     'gtdbtk':   'conda install -n {env} -c bioconda gtdbtk',

@@ -30,7 +30,7 @@ conda env. So the layout is:
 
 | Conda env | Contains | MaMISA commands that run in it |
 |---|---|---|
-| `mamisa` (light) | MaMISA + samtools, BLAST+, bedtools, Kraken2, Meryl | `organize-mags`, `check-chimeras`, `classify-clipping`, `check-read-chimeras`, `check-zero-coverage`, `process-large-contigs`, and the `setup-workflow` / `fetch-databases` / `check-envs` helpers |
+| `mamisa` (light) | MaMISA + samtools, BLAST+, bedtools, Kraken2, Kaiju, Meryl | `organize-mags`, `check-chimeras`, `classify-clipping`, `check-read-chimeras`, `check-zero-coverage`, `process-large-contigs`, and the `setup-workflow` / `fetch-databases` / `check-envs` helpers |
 | `checkm2` | CheckM2 (+ MaMISA) | `run-checkm2` |
 | `gtdbtk` | GTDB-Tk (+ MaMISA) | `run-gtdbtk` |
 | `gunc` | GUNC + DIAMOND + Prodigal (+ MaMISA) | `run-gunc` |
@@ -57,7 +57,7 @@ to be on `PATH` for the command that uses it.
 | `run-gtdbtk` | GTDB-Tk (>=2.5 uses skani; Mash/`--mash-db` no longer used) |
 | `run-gunc` | GUNC + DIAMOND + Prodigal |
 | `run-mimag-rna` | barrnap + tRNAscan-SE |
-| `check-read-chimeras` | samtools, Kraken2 |
+| `check-read-chimeras` | samtools, Kraken2 or Kaiju |
 | `check-chimeras` | (none; `--gunc-dir` consumes GUNC output) |
 | `classify-clipping` | samtools (+ BLAST+ for `--self-blast`) |
 | `check-zero-coverage` | BLAST+ (`blastn`/`makeblastdb`), optional Meryl |
@@ -71,7 +71,7 @@ Create only the ones you need (see the table above). `mamba` or `conda` both wor
 ```bash
 # 1) Light env: MaMISA + the small CLI tools. Needed for most commands.
 mamba create -n mamisa -c conda-forge -c bioconda \
-    python=3.10 samtools blast bedtools kraken2 meryl
+    python=3.10 samtools blast bedtools kraken2 kaiju meryl
 conda activate mamisa
 pip install -e .                     # installs MaMISA (clone this repo first)
 

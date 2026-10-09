@@ -114,6 +114,84 @@ def parse_kraken2_report(report_file: Path) -> Dict[int, Tuple[str, str]]:
     return taxid_info
 
 
+def parse_kaiju_output(kaiju_file: Path) -> Dict[str, int]:
+    """
+    Parse a Kaiju per-read output file.
+
+    Format (tab-separated), the first three columns are stable whether or
+    not Kaiju was run with -v / kaiju-addTaxonNames:
+        C/U  read_id  taxid  [score  taxids  accessions  fragment ...]
+
+    Returns {read_id: taxid}. Unclassified reads (status 'U') get taxid 0.
+    The shape matches parse_kraken2_output so the rest of the pipeline is
+    classifier-agnostic.
+    """
+    read_taxid: Dict[str, int] = {}
+
+    with open(kaiju_file) as f:
+        for lineno, line in enumerate(f, start=1):
+            if not line.strip():
+                continue
+            fields = line.split('\t')
+            if len(fields) < 3:
+                log_warning(
+                    f"Skipping malformed Kaiju output line {lineno} "
+                    f"(expected ≥3 fields, got {len(fields)})"
+                )
+                continue
+            status = fields[0].strip()
+            read_id = fields[1].strip()
+            raw_taxid = fields[2].strip()
+            if status == 'U' or not raw_taxid:
+                read_taxid[read_id] = 0
+                continue
+            try:
+                taxid = int(raw_taxid)
+            except ValueError:
+                log_warning(f"Non-integer taxid on line {lineno}, skipping")
+                continue
+            read_taxid[read_id] = taxid
+
+    log_info(f"Loaded {len(read_taxid):,} read classifications from {kaiju_file.name}")
+    return read_taxid
+
+
+def parse_names_dmp(names_file: Path) -> Dict[int, Tuple[str, str]]:
+    """
+    Parse an NCBI taxonomy names.dmp for taxid -> name lookup (Kaiju's
+    naming source; Kaiju has no Kraken2-style report).
+
+    Format (fields separated by '\\t|\\t', rows end with '\\t|'):
+        taxid | name | unique_name | name_class |
+
+    Only 'scientific name' rows are kept. Rank is not present in names.dmp
+    (it lives in nodes.dmp), so rank is reported as '-'. Returns
+    {taxid: ('-', name)} to match parse_kraken2_report's shape.
+    """
+    taxid_info: Dict[int, Tuple[str, str]] = {
+        0: ('-', 'unclassified'),
+        1: ('-', 'root'),
+    }
+
+    with open(names_file) as f:
+        for line in f:
+            if not line.strip():
+                continue
+            fields = [c.strip() for c in line.rstrip('\n').rstrip('|').split('|')]
+            if len(fields) < 4:
+                continue
+            if fields[3] != 'scientific name':
+                continue
+            try:
+                taxid = int(fields[0])
+            except ValueError:
+                continue
+            taxid_info[taxid] = ('-', fields[1])
+
+    log_info(f"Loaded taxonomy names for {len(taxid_info):,} taxa from {names_file.name}")
+    return taxid_info
+
+
 def taxon_label(taxid: int, taxid_info: Dict[int, Tuple[str, str]]) -> str:
     """Return a human-readable label for a taxid."""
     if taxid == 0:

@@ -58,6 +58,8 @@ from collections import Counter, defaultdict
 from ..utils.read_taxonomy import (
     parse_kraken2_output,
     parse_kraken2_report,
+    parse_kaiju_output,
+    parse_names_dmp,
     check_samtools,
     stream_bam,
     ContigReadProfile,
@@ -286,14 +288,16 @@ def print_summary(contig_rows: List[Dict]):
 def register_parser(subparsers):
     parser = subparsers.add_parser(
         'check-read-chimeras',
-        help='Detect chimeric contigs by read-level taxonomy (Kraken2 + BAM)',
+        help='Detect chimeric contigs by read-level taxonomy (Kraken2 or Kaiju + BAM)',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 How it works
 ------------
-Each read that maps to a contig carries a Kraken2 taxonomic assignment.
-If a contig is genuine, nearly all its reads should belong to one organism.
-If reads from two organisms mapped to the same contig, it is chimeric.
+Each read that maps to a contig carries a per-read taxonomic assignment
+(Kraken2 k-mer, or Kaiju protein-level for more sensitivity on divergent
+taxa). If a contig is genuine, nearly all its reads should belong to one
+organism. If reads from two organisms mapped to the same contig, it is
+chimeric.
 
 For long contigs (≥ --window-threshold), a sliding window tracks where
 the dominant taxon changes — pinpointing the chimeric junction.
@@ -301,11 +305,14 @@ the dominant taxon changes — pinpointing the chimeric junction.
 Required inputs
 ---------------
   --bam              BAM file (reads mapped to assembly; must be sorted)
-  --kraken2-output   Kraken2 per-read output (kraken2 --output FILE)
+  one classifier:
+    --kraken2-output Kraken2 per-read output (kraken2 --output FILE), or
+    --kaiju-output   Kaiju per-read output (kaiju -o FILE)
 
 Recommended
 -----------
-  --kraken2-report   Kraken2 summary report (kraken2 --report FILE)
+  --kraken2-report   Kraken2 summary report (kraken2 --report FILE), or
+  --kaiju-names      NCBI names.dmp (for Kaiju taxon names)
                      Enables human-readable taxon names in output.
   --assembly         FASTA assembly (needed for accurate window boundaries
                      on circular/long contigs)
@@ -327,6 +334,13 @@ Examples
     --output-dir chimera_results/ \\
     --window 10000 --window-step 2000
 
+  # Same check with Kaiju (protein-level, catches divergent organisms)
+  mamisa check-read-chimeras \\
+    --bam mapping.bam \\
+    --kaiju-output kaiju.out \\
+    --kaiju-names /data/kaiju_db/names.dmp \\
+    --output-dir chimera_results/
+
   # Bin-level check: point --bam at reads mapped to your bins FASTA
   # and use the binned FASTA as --assembly
 
@@ -342,14 +356,22 @@ Examples
     # Required
     parser.add_argument('--bam', type=Path, required=True,
                         help='BAM file (reads mapped to assembly, sorted)')
-    parser.add_argument('--kraken2-output', type=Path, required=True,
-                        help='Kraken2 per-read output file (kraken2 --output)')
     parser.add_argument('-o', '--output-dir', type=Path, required=True,
                         help='Output directory for TSV reports')
 
-    # Optional enhancements
+    # Per-read taxonomy: exactly one classifier (same role, pick by sensitivity)
+    taxo = parser.add_mutually_exclusive_group(required=True)
+    taxo.add_argument('--kraken2-output', type=Path,
+                      help='Kraken2 per-read output file (kraken2 --output)')
+    taxo.add_argument('--kaiju-output', type=Path,
+                      help='Kaiju per-read output file (kaiju -o); protein-level, '
+                           'more sensitive on divergent taxa')
+
+    # Optional enhancements (taxon-name lookup; use the one matching your classifier)
     parser.add_argument('--kraken2-report', type=Path,
                         help='Kraken2 report file (kraken2 --report) for taxon name lookup')
+    parser.add_argument('--kaiju-names', type=Path,
+                        help='NCBI names.dmp for taxon name lookup when using --kaiju-output')
     parser.add_argument('--assembly', type=Path,
                         help='Assembly FASTA (provides contig lengths for windowed analysis)')
 
@@ -385,10 +407,19 @@ def run(args):
     """Execute check-read-chimeras."""
 
     validate_file_exists(args.bam, "BAM file")
-    validate_file_exists(args.kraken2_output, "Kraken2 output file")
+
+    use_kaiju = args.kaiju_output is not None
+    if use_kaiju:
+        validate_file_exists(args.kaiju_output, "Kaiju output file")
+    else:
+        validate_file_exists(args.kraken2_output, "Kraken2 output file")
 
     if args.kraken2_report and not args.kraken2_report.exists():
         log_error(f"Kraken2 report not found: {args.kraken2_report}")
+        sys.exit(1)
+
+    if args.kaiju_names and not args.kaiju_names.exists():
+        log_error(f"Kaiju names.dmp not found: {args.kaiju_names}")
         sys.exit(1)
 
     if args.assembly and not args.assembly.exists():
@@ -403,12 +434,24 @@ def run(args):
 
     print_header("MaMISA - Chimera Check (Read-Level Taxonomy)")
 
-    # ── Step 1: Load Kraken2 data ─────────────────────────────────────────
-    print_section("STEP 1: Loading Kraken2 classifications")
-    read_taxid = parse_kraken2_output(args.kraken2_output)
+    # ── Step 1: Load per-read taxonomy ────────────────────────────────────
+    classifier = "Kaiju" if use_kaiju else "Kraken2"
+    print_section(f"STEP 1: Loading {classifier} classifications")
+    if use_kaiju:
+        read_taxid = parse_kaiju_output(args.kaiju_output)
+    else:
+        read_taxid = parse_kraken2_output(args.kraken2_output)
 
     taxid_info: Dict = {}
-    if args.kraken2_report:
+    if use_kaiju:
+        if args.kaiju_names:
+            taxid_info = parse_names_dmp(args.kaiju_names)
+        else:
+            log_warning(
+                "No --kaiju-names provided — taxon IDs will be reported "
+                "as 'taxid:NNN' without names"
+            )
+    elif args.kraken2_report:
         taxid_info = parse_kraken2_report(args.kraken2_report)
     else:
         log_warning(
