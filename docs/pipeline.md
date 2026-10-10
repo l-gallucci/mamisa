@@ -30,6 +30,18 @@ which CheckM2 does not check. `run-mimag-rna` adds that evidence and
 `organize-mags --mimag-rna-dir` demotes HQ genomes that fail it to MQ. Skip it and
 HQ is completeness/contamination only.
 
+For a mixed bacteria + archaea bin set, barrnap and tRNAscan-SE need the right
+kingdom per genome. Run it once with `--split-by-domain --gtdbtk-dir <taxonomy>`:
+MaMISA reads the GTDB-Tk per-domain summaries and applies `bac`/`arc` automatically
+(no manual splitting of the bins):
+
+```bash
+conda run -n mimag mamisa run-mimag-rna \
+    --selected-dir results/filtered/Selected --tiers HQ \
+    -o results/mimag_rna --threads 40 \
+    --split-by-domain --gtdbtk-dir results/gtdbtk
+```
+
 ### Option B - Snakemake orchestrates it
 
 One command runs the whole DAG. Configure once, then run:

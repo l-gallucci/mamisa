@@ -107,6 +107,70 @@ def collect_genomes(input_dir: Path, extension: str) -> List[Path]:
     return sorted(input_dir.glob(f"*.{extension.lstrip('.')}"))
 
 
+_FASTA_EXTS = ('.fa', '.fasta', '.fna', '.fa.gz', '.fasta.gz', '.fna.gz')
+
+
+def _strip_ext(name: str) -> str:
+    low = name.lower()
+    for ext in _FASTA_EXTS:
+        if low.endswith(ext):
+            return name[:-len(ext)]
+    return name
+
+
+def load_domains_from_gtdbtk(gtdbtk_dir: Path) -> dict:
+    """
+    Map genome id -> 'bac' / 'arc' using GTDB-Tk summaries.
+
+    GTDB-Tk writes one summary per domain (gtdbtk.bac120.summary.tsv,
+    gtdbtk.ar53/ar122.summary.tsv), so the domain is taken from the filename;
+    the classification column (d__Archaea / d__Bacteria) is the fallback.
+    Each genome is keyed by both its full name and extension-stripped stem.
+    """
+    import csv
+    mapping: dict = {}
+    summaries = sorted(gtdbtk_dir.rglob("gtdbtk.*.summary.tsv"))
+    if not summaries:
+        log_warning(f"No gtdbtk.*.summary.tsv found under {gtdbtk_dir}")
+        return mapping
+    for summary in summaries:
+        fname = summary.name.lower()
+        if 'bac120' in fname:
+            file_domain = 'bac'
+        elif 'ar53' in fname or 'ar122' in fname:
+            file_domain = 'arc'
+        else:
+            file_domain = None
+        try:
+            with open(summary) as f:
+                for row in csv.DictReader(f, delimiter='\t'):
+                    g = (row.get('user_genome') or '').strip()
+                    if not g:
+                        continue
+                    domain = file_domain
+                    if domain is None:
+                        cls = row.get('classification') or ''
+                        domain = 'arc' if 'd__Archaea' in cls else 'bac'
+                    mapping[g] = domain
+                    mapping[_strip_ext(g)] = domain
+        except OSError as e:
+            log_warning(f"Could not read {summary}: {e}")
+    n = len({k for k in mapping})
+    log_info(f"Loaded domains for {n:,} genome keys from {len(summaries)} "
+             f"GTDB-Tk summary file(s)")
+    return mapping
+
+
+def resolve_kingdom(genome: Path, domains: dict, default: str) -> str:
+    """Resolve barrnap/tRNAscan kingdom for a genome from the domain map."""
+    for key in (genome.name, genome.stem, _strip_ext(genome.name)):
+        if key in domains:
+            return domains[key]
+    log_warning(f"  {genome.name}: domain not found in GTDB-Tk; "
+                f"using default --kingdom {default}")
+    return default
+
+
 def register_parser(subparsers):
     parser = subparsers.add_parser(
         'run-mimag-rna',
@@ -131,6 +195,12 @@ Examples:
   mamisa run-mimag-rna \\
     --selected-dir filtered/Selected/ --output mimag_rna/ \\
     --extension fa
+
+  # Mixed bacteria + archaea: pick bac/arc per genome from GTDB-Tk
+  mamisa run-mimag-rna \\
+    --selected-dir filtered/Selected/ --output mimag_rna/ \\
+    --extension fa --tiers HQ \\
+    --split-by-domain --gtdbtk-dir taxonomy/
         """
     )
 
@@ -146,7 +216,15 @@ Examples:
                         help='Genome file extension (default: fa)')
     parser.add_argument('--kingdom', default='bac',
                         choices=['bac', 'arc', 'euk'],
-                        help='Kingdom for barrnap/tRNAscan-SE (default: bac)')
+                        help='Kingdom for barrnap/tRNAscan-SE (default: bac). '
+                             'With --split-by-domain this is only the fallback '
+                             'for genomes missing from GTDB-Tk')
+    parser.add_argument('--split-by-domain', action='store_true',
+                        help='Pick bac/arc per genome from GTDB-Tk results '
+                             '(requires --gtdbtk-dir). Handles mixed '
+                             'bacteria+archaea bin sets in one run')
+    parser.add_argument('--gtdbtk-dir', type=Path,
+                        help='GTDB-Tk output dir (summaries) for --split-by-domain')
     parser.add_argument('--threads', type=int, default=1,
                         help='Threads for barrnap (default: 1)')
     parser.add_argument('--tiers', default='HQ,MQ,LQ',
@@ -159,8 +237,13 @@ Examples:
 
 
 def _process_dir(input_dir: Path, output_dir: Path, extension: str,
-                 kingdom: str, threads: int) -> List[dict]:
-    """Process every genome in a directory; return list of records."""
+                 kingdom_for, threads: int) -> List[dict]:
+    """
+    Process every genome in a directory; return list of records.
+
+    `kingdom_for` is a callable genome_path -> 'bac'/'arc'/'euk', so the
+    kingdom can be fixed or resolved per genome (e.g. from GTDB-Tk).
+    """
     genomes = collect_genomes(input_dir, extension)
     if not genomes:
         log_warning(f"No genomes in {input_dir} with extension .{extension}")
@@ -171,9 +254,11 @@ def _process_dir(input_dir: Path, output_dir: Path, extension: str,
 
     records = []
     for i, genome in enumerate(genomes, 1):
-        log_info(f"  [{i}/{len(genomes)}] {genome.name}")
+        kingdom = kingdom_for(genome)
+        log_info(f"  [{i}/{len(genomes)}] {genome.name} [{kingdom}]")
         rec = process_genome(genome, work_dir, kingdom, threads)
         if rec:
+            rec['kingdom'] = kingdom
             records.append(rec)
     return records
 
@@ -184,6 +269,21 @@ def run(args):
     print_section("Checking Dependencies")
     if not check_mimag_env():
         sys.exit(1)
+
+    # Build the per-genome kingdom resolver (fixed, or split by GTDB-Tk domain).
+    if args.split_by_domain:
+        if not args.gtdbtk_dir:
+            log_error("--split-by-domain requires --gtdbtk-dir")
+            sys.exit(1)
+        validate_dir_exists(args.gtdbtk_dir, "GTDB-Tk directory")
+        print_section("Loading domains from GTDB-Tk")
+        domains = load_domains_from_gtdbtk(args.gtdbtk_dir)
+        if not domains:
+            log_error("No domains loaded from GTDB-Tk; cannot split by domain")
+            sys.exit(1)
+        kingdom_for = lambda g: resolve_kingdom(g, domains, args.kingdom)
+    else:
+        kingdom_for = lambda g: args.kingdom
 
     args.output.mkdir(parents=True, exist_ok=True)
 
@@ -201,14 +301,14 @@ def run(args):
             log_info(f"\nTier: {tier}")
             tier_out = args.output / tier
             recs = _process_dir(tier_dir, tier_out, args.extension,
-                                args.kingdom, args.threads)
+                                kingdom_for, args.threads)
             for r in recs:
                 r['tier'] = tier
             all_records.extend(recs)
     else:
         validate_dir_exists(args.genome_dir, "Genome directory")
         all_records = _process_dir(args.genome_dir, args.output,
-                                   args.extension, args.kingdom, args.threads)
+                                   args.extension, kingdom_for, args.threads)
 
     if not all_records:
         log_error("No genomes processed")
@@ -232,8 +332,12 @@ def run(args):
     print(f"  rRNA complete (5S+16S+23S):   {n_rrna:>8,}")
     print(f"  tRNA complete (>=18 aa):      {n_trna:>8,}")
     print(f"  Full MIMAG rRNA/tRNA pass:    {n_ok:>8,}")
+    if args.split_by_domain:
+        n_bac = sum(1 for r in all_records if r.get('kingdom') == 'bac')
+        n_arc = sum(1 for r in all_records if r.get('kingdom') == 'arc')
+        print(f"  By domain:                    bac={n_bac:,}  arc={n_arc:,}")
 
-    log_info("\n✓ Done! Feed to organize-mags with --mimag-rna-dir")
+    log_info("\nDone. Feed to organize-mags with --mimag-rna-dir")
 
 
 if __name__ == '__main__':

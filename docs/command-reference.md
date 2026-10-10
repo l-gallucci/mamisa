@@ -250,11 +250,20 @@ Required:
 
 Optional:
   --extension STR             Genome file extension (default: fa)
-  --kingdom {bac,arc,euk}     Kingdom for barrnap/tRNAscan-SE (default: bac)
+  --kingdom {bac,arc,euk}     Kingdom for barrnap/tRNAscan-SE (default: bac;
+                              with --split-by-domain, the fallback only)
+  --split-by-domain           Pick bac/arc per genome from GTDB-Tk (needs
+                              --gtdbtk-dir); handles mixed bacteria+archaea sets
+  --gtdbtk-dir PATH           GTDB-Tk output dir for --split-by-domain
   --threads INT               Threads for barrnap (default: 1)
   --tiers LIST                Tiers to process (default: HQ,MQ,LQ)
   --keep-intermediate         Keep per-genome barrnap/tRNAscan output files
 ```
+
+Mixed bacteria + archaea: run once with `--split-by-domain --gtdbtk-dir <taxonomy>`.
+GTDB-Tk writes one summary per domain (`gtdbtk.bac120.summary.tsv`,
+`gtdbtk.ar53.summary.tsv`), so each genome gets barrnap/tRNAscan with the correct
+kingdom automatically; genomes absent from GTDB-Tk fall back to `--kingdom`.
 
 ## run-gunc
 
