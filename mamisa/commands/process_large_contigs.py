@@ -93,15 +93,7 @@ def run_checkm2(genome_dir: Path, output_dir: Path, threads: int = 1,
     """
     deps = check_dependencies(['checkm2'])
 
-    if deps['checkm2'] is None:
-        log_error("CheckM2 not found in PATH")
-        if checkm2_env:
-            log_error(f"Please activate the conda environment: conda activate {checkm2_env}")
-        return False
-
-    log_info(f"Found CheckM2: {deps['checkm2']}")
-
-    cmd = [
+    base_cmd = [
         'checkm2', 'predict',
         '--threads', str(threads),
         '--input', str(genome_dir),
@@ -109,6 +101,21 @@ def run_checkm2(genome_dir: Path, output_dir: Path, threads: int = 1,
         '-x', 'fa',
         '--force',
     ]
+
+    if deps['checkm2'] is not None:
+        # CheckM2 is on the current PATH (command run from inside the checkm2 env)
+        log_info(f"Found CheckM2: {deps['checkm2']}")
+        cmd = base_cmd
+    elif checkm2_env:
+        # Not on PATH: wrap in `conda run -n <env>` so --checkm2-env actually works
+        log_warning(f"CheckM2 not on current PATH; running via "
+                    f"conda run -n {checkm2_env}")
+        cmd = ['conda', 'run', '-n', checkm2_env] + base_cmd
+    else:
+        log_error("CheckM2 not found in PATH and no --checkm2-env given")
+        log_error("Either run this command inside the checkm2 env, or pass "
+                  "--checkm2-env <name>")
+        return False
 
     log_info(f"Running: {' '.join(cmd)}")
 
@@ -120,6 +127,9 @@ def run_checkm2(genome_dir: Path, output_dir: Path, threads: int = 1,
         return True
     except subprocess.CalledProcessError as e:
         log_error(f"CheckM2 failed with exit code {e.returncode}")
+        return False
+    except FileNotFoundError:
+        log_error("conda not found in PATH; cannot run CheckM2 via --checkm2-env")
         return False
 
 
