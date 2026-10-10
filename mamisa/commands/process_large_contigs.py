@@ -216,7 +216,10 @@ def extract_hq_genomes(large_contigs_individual_dir: Path, hq_list: List[str],
     extracted = 0
 
     for contig_name in hq_list:
-        source = large_contigs_individual_dir / f"{safe_filename(contig_name)}.fa"
+        # contig_name comes from the CheckM2 report, i.e. it is already the
+        # individual-file stem (safe_filename was applied when the files were
+        # written); do NOT sanitise again or we double-hash and miss the file.
+        source = large_contigs_individual_dir / f"{contig_name}.fa"
         dest = output_dir / source.name
 
         if source.exists():
@@ -237,7 +240,9 @@ def create_updated_assembly(regular_assembly: Path, large_contigs_individual_dir
 
     added = 0
     for contig_name in contigs_to_keep:
-        contig_file = large_contigs_individual_dir / f"{safe_filename(contig_name)}.fa"
+        # Names come from the CheckM2 report = already the individual-file stem;
+        # do not re-apply safe_filename (would double-hash and miss the file).
+        contig_file = large_contigs_individual_dir / f"{contig_name}.fa"
         if contig_file.exists():
             for name, seq in read_fasta_streaming(contig_file):
                 sequences.append((name, seq))
