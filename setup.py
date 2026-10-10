@@ -33,7 +33,7 @@ setup(
 
     packages=find_packages(),
 
-    python_requires=">=3.9",
+    python_requires=">=3.8",
     
     install_requires=[
         # No external dependencies required for core functionality
@@ -60,6 +60,7 @@ setup(
         "Topic :: Scientific/Engineering :: Bio-Informatics",
         "License :: OSI Approved :: MIT License",
         "Programming Language :: Python :: 3",
+        "Programming Language :: Python :: 3.8",
         "Programming Language :: Python :: 3.9",
         "Programming Language :: Python :: 3.10",
         "Programming Language :: Python :: 3.11",

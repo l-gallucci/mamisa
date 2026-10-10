@@ -1,6 +1,6 @@
 # Installation
 
-MaMISA itself is pure Python with no external dependencies (Python >= 3.9), so it
+MaMISA itself is pure Python with no external dependencies (Python >= 3.8), so it
 installs anywhere in seconds:
 
 ```bash
