@@ -47,9 +47,13 @@ Optional:
 
 ## check-chimeras
 
-Combines GC heterogeneity, windowed GC (circular contigs), CheckM2 contamination,
-GTDB-Tk warnings and GUNC into a per-bin High/Medium/Low/Clean risk. With
-`--gunc-dir` the summary also reports the aggregate `pass.GUNC` / chimera count.
+Combines GUNC gene-level taxonomy, CheckM2 contamination, GTDB-Tk warnings and
+GC heterogeneity into a per-bin High/Medium/Low/Clean risk. Gene-level taxonomy
+drives the score; GC is noisy (a single short contig can set the max-min delta)
+so it only corroborates and never reaches Medium on its own. If `--gunc-dir`
+contains `*.contig_assignments.tsv` (from `run-gunc --contig-taxonomy-output`),
+bins whose contigs span two or more clades get the strongest signal (+4). The
+`reasons` column names the contigs that set each GC delta, with their lengths.
 
 ```
 Required:
@@ -59,13 +63,36 @@ Optional:
   -o, --output PATH           Output TSV (default: chimera_report.tsv)
   --gtdbtk-dir PATH           GTDB-Tk output directory (adds taxonomy signals)
   --checkm2-report PATH       CheckM2 report (adds contamination signal)
-  --gunc-dir PATH             GUNC output directory (adds gene-level clade-consistency signal)
+  --gunc-dir PATH             GUNC output directory (gene-level clade-consistency; plus
+                              per-contig multi-clade if *.contig_assignments.tsv present)
+  --gunc-tax-rank STR         Rank for per-contig clade counting (default: phylum)
+  --gunc-min-genes INT        Min genes per contig before its clade counts (default: 3)
   --gc-window INT             GC window size in bp (default: 5000)
   --gc-step INT               GC step in bp (default: 2500)
   --taxonomy-level STR        Taxonomy level for comparison (default: phylum)
   --extensions LIST           Genome extensions (default: fa,fasta,fna)
   --dry-run
 ```
+
+Output columns: `bin`, `n_contigs`, `is_circular_candidate`, `gc_mean_pct`,
+`gc_delta_pct`, `gc_cv_pct`, `windowed_gc_delta_pct`, `checkm2_contamination`,
+`gtdbtk_taxonomy`, `gtdbtk_warning`, `gunc_pass`, `gunc_css`,
+`gunc_contig_clades`, `chimera_risk`, `reasons`.
+
+Scoring (High >=5, Medium >=2, Low >=1, Clean 0):
+
+| Signal | Score |
+|---|---|
+| GUNC per-contig taxonomy: contigs span >=2 clades | +4 |
+| GUNC pass.GUNC = False (aggregate) | +3 |
+| GUNC clade_separation_score > 0.45 | +2 |
+| CheckM2 contamination > 10% / > 5% | +3 / +2 |
+| Inter-contig GC delta > 10% / > 5% | +2 / +1 |
+| Windowed GC delta > 15% (circular contigs) | +1 |
+| GTDB-Tk placement warning | +1 |
+
+Pre-dRep filter: exclude `gunc_pass == False` or `chimera_risk == High`; send
+Medium to manual review (read the `reasons` column).
 
 ## classify-clipping
 
@@ -285,6 +312,8 @@ Optional:
   --threads INT               Threads (default: 1)
   --db-file PATH              GUNC diamond database (.dmnd); else uses $GUNC_DB
   --tiers LIST                Tiers to process (default: HQ,MQ,LQ)
+  --contig-taxonomy-output    Also write per-contig taxonomy (<genome>.contig_assignments.tsv);
+                              check-chimeras consumes it for the multi-clade signal
   --gunc-args STR             Extra arguments passed to gunc run
 ```
 

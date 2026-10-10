@@ -33,6 +33,7 @@ from typing import Dict, List, Optional
 
 from ..utils.chimera import (
     analyze_bin_gc,
+    gc_outlier_contigs,
     parse_gtdbtk_summary,
     extract_taxonomy_level,
     has_taxonomy_warning,
@@ -92,6 +93,8 @@ def run_chimera_check(
     gc_window: int,
     gc_step: int,
     taxonomy_level: str,
+    gunc_tax_rank: str,
+    gunc_min_genes: int,
     dry_run: bool,
 ) -> Dict[str, int]:
     """
@@ -113,11 +116,25 @@ def run_chimera_check(
         log_info(f"CheckM2 contamination loaded for {len(contamination_map):,} genomes")
 
     gunc_map: Dict[str, Dict] = {}
+    gunc_contig_map: Dict[str, Dict] = {}
     if gunc_dir:
-        from ..utils.chimera import parse_gunc_output
+        from ..utils.chimera import parse_gunc_output, parse_gunc_contig_assignments
         gunc_map = parse_gunc_output(gunc_dir)
         if gunc_map:
             log_info(f"GUNC results loaded for {len(gunc_map):,} genomes")
+        gunc_contig_map = parse_gunc_contig_assignments(
+            gunc_dir, rank=gunc_tax_rank, min_genes=gunc_min_genes)
+        if gunc_contig_map:
+            log_info(
+                f"GUNC per-contig taxonomy loaded for {len(gunc_contig_map):,} "
+                f"genomes (rank {gunc_tax_rank})"
+            )
+        else:
+            log_info(
+                "No GUNC per-contig taxonomy files (*.contig_assignments.tsv) "
+                "found - rerun run-gunc with --contig-taxonomy-output to enable "
+                "the multi-clade signal"
+            )
 
     print_section("Scanning bin files")
 
@@ -155,6 +172,8 @@ def run_chimera_check(
         gc_delta = bin_stats.get('delta') or 0.0
         gc_cv = bin_stats.get('cv') or 0.0
         windowed_delta = windowed_stats.get('delta') if windowed_stats else None
+        gc_outlier = gc_outlier_contigs(
+            gc_data['per_contig_gc'], gc_data['per_contig_len'])
 
         # Taxonomy
         tax_record = taxonomy.get(bin_name, {})
@@ -169,6 +188,8 @@ def run_chimera_check(
         gunc_record = gunc_map.get(bin_name, {})
         gunc_fail = (not gunc_record['pass_gunc']) if gunc_record else None
         gunc_css = gunc_record.get('css') if gunc_record else None
+        gunc_contig_record = gunc_contig_map.get(bin_name, {})
+        gunc_contig_clades = gunc_contig_record.get('n_clades')
         if gunc_dir:
             if not gunc_record:
                 gunc_counts['na'] += 1
@@ -187,6 +208,8 @@ def run_chimera_check(
             taxonomy_warning=tax_warn,
             gunc_fail=gunc_fail,
             gunc_css=gunc_css,
+            gunc_contig_clades=gunc_contig_clades,
+            gc_outlier=gc_outlier,
         )
         risk_counts[risk] = risk_counts.get(risk, 0) + 1
 
@@ -217,6 +240,8 @@ def run_chimera_check(
             'gtdbtk_warning': tax_warn,
             'gunc_pass': ('N/A' if not gunc_record else gunc_record['pass_gunc']),
             'gunc_css': ('N/A' if gunc_css is None else f"{gunc_css:.3f}"),
+            'gunc_contig_clades': ('N/A' if gunc_contig_clades is None
+                                   else gunc_contig_clades),
             'chimera_risk': risk,
             'reasons': ' | '.join(reasons),
         })
@@ -226,7 +251,7 @@ def run_chimera_check(
             'bin', 'n_contigs', 'is_circular_candidate',
             'gc_mean_pct', 'gc_delta_pct', 'gc_cv_pct', 'windowed_gc_delta_pct',
             'checkm2_contamination', 'gtdbtk_taxonomy', 'gtdbtk_warning',
-            'gunc_pass', 'gunc_css',
+            'gunc_pass', 'gunc_css', 'gunc_contig_clades',
             'chimera_risk', 'reasons',
         ]
         with open(output_file, 'w', newline='') as f:
@@ -249,19 +274,25 @@ def register_parser(subparsers):
         help='Detect chimeric MAGs and circular contigs using GC and taxonomy signals',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
-Signal interpretation
+Signal interpretation (gene-level taxonomy drives; GC only corroborates)
 ---------------------
-  GC delta (multi-contig bins)
-    > 10 %  High risk — contigs likely from different organisms
-    > 5 %   Low/medium risk — worth inspecting
-  Windowed GC delta (circular contigs ≥ 100 kbp)
-    > 15 %  High risk — possible chimeric junction in circular assembly
-    > 8 %   Medium risk
+  GUNC per-contig taxonomy  (needs run-gunc --contig-taxonomy-output)
+    contigs span ≥ 2 clades  +4   strongest: direct per-contig taxonomic split
+  GUNC gene-level (aggregate)
+    pass.GUNC = False        +3
+    clade_separation > 0.45  +2
   CheckM2 contamination
-    > 10 %  High risk
-    > 5 %   Medium risk
-  GTDB-Tk warning
-    Any warning or MSA percent < 10 % → low-confidence placement
+    > 10 %  +3     > 5 %  +2
+  GC delta between contigs (multi-contig bins; max-min, can be set by one short
+  outlier — the driving contigs + lengths are shown in the reasons column)
+    > 10 %  +2     > 5 %  +1
+  Windowed GC delta (circular contigs ≥ 100 kbp) — weakest, a prophage/island/
+  GC-skew looks identical to a chimeric junction
+    > 15 %  +1
+  GTDB-Tk warning (any, or MSA percent < 10 %)   +1
+
+  Risk = High (≥5) / Medium (≥2) / Low (≥1) / Clean (0). GC alone never reaches
+  Medium: it needs a taxonomy or contamination signal to corroborate.
 
 Examples
 --------
@@ -299,7 +330,18 @@ Examples
     parser.add_argument('--checkm2-report', type=Path,
                         help='CheckM2 quality_report.tsv (adds contamination signal)')
     parser.add_argument('--gunc-dir', type=Path,
-                        help='GUNC output directory (adds gene-level clade-consistency signal)')
+                        help='GUNC output directory (adds gene-level clade-consistency signal). '
+                             'If it contains *.contig_assignments.tsv (from run-gunc '
+                             '--contig-taxonomy-output), also adds the per-contig '
+                             'multi-clade signal.')
+    parser.add_argument('--gunc-tax-rank', default='phylum',
+                        choices=['kingdom', 'phylum', 'class', 'order', 'family',
+                                 'genus', 'species'],
+                        help='Rank at which to count distinct per-contig GUNC '
+                             'clades (default: phylum)')
+    parser.add_argument('--gunc-min-genes', type=int, default=3,
+                        help='Min genes a contig needs at the chosen rank before '
+                             'its GUNC clade is counted (default: 3; filters strays)')
 
     # GC window parameters
     parser.add_argument('--gc-window', type=int, default=5000,
@@ -354,6 +396,8 @@ def run(args):
         gc_window=args.gc_window,
         gc_step=args.gc_step,
         taxonomy_level=args.taxonomy_level,
+        gunc_tax_rank=args.gunc_tax_rank,
+        gunc_min_genes=args.gunc_min_genes,
         dry_run=args.dry_run,
     )
 

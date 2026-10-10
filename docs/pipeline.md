@@ -16,7 +16,8 @@ conda run -n checkm2 mamisa run-checkm2 --genome-dir bins/ -o results/checkm2 --
 conda run -n gtdbtk  env GTDBTK_DATA_PATH=/data/gtdbtk_r220 \
                      mamisa run-gtdbtk  --genome-dir bins/ -o results/gtdbtk --cpus 40
 conda run -n gunc    mamisa run-gunc    --genome-dir bins/ -o results/gunc \
-                     --file-suffix .fa --threads 40 --db-file /data/gunc/gunc_db_progenomes2.1.dmnd
+                     --file-suffix .fa --threads 40 --db-file /data/gunc/gunc_db_progenomes2.1.dmnd \
+                     --contig-taxonomy-output   # enables check-chimeras per-contig multi-clade signal
 conda run -n mimag   mamisa run-mimag-rna --genome-dir bins/ -o results/mimag_rna --threads 40  # optional
 conda run -n mamisa  mamisa organize-mags --checkm2-root results/checkm2 --genomes-dir bins/ \
                      --gtdbtk-dir results/gtdbtk -o results/filtered --rename --copy \
@@ -170,6 +171,10 @@ magnitude slower and short reads give low-specificity hits.
 ### Step 3b - Detect chimeric MAGs (GC + GUNC, optional)
 
 Run after binning for a composition + gene-consistency check on complete bins.
+Gene-level taxonomy drives the risk score; GC only corroborates (a single short
+contig can set the GC delta, so GC alone never reaches Medium). When GUNC was run
+with `--contig-taxonomy-output`, bins whose contigs span two or more clades get
+the strongest signal.
 
 ```bash
 mamisa check-chimeras \
@@ -178,8 +183,13 @@ mamisa check-chimeras \
     --gtdbtk-dir 09_taxonomy/ \
     --checkm2-report 07_checkm2/quality_report.tsv \
     --gunc-dir 07_gunc/ \
+    --gunc-tax-rank phylum \
     --gc-window 5000 --gc-step 2500
 ```
+
+Pre-dRep filter: exclude rows with `gunc_pass == False` or `chimera_risk == High`;
+send Medium to manual review (the `reasons` column names the contigs driving each
+GC delta and reports per-contig clade counts).
 
 ### Step 4 - Classify clipping positions
 
